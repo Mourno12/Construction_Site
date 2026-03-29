@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Construction Safety Dashboard</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div class="container">
+
+    <!-- HEADER -->
+    <header>
+        <div class="header-left">
+            <h1>🏗️ Construction Safety Dashboard</h1>
+            <span id="modeBadge" class="badge idle">IDLE</span>
+        </div>
+        <div class="fps-badge" id="fpsBadge">FPS: 0</div>
+    </header>
+
+    <div class="main-grid">
+
+        <!-- LEFT -->
+        <div class="left-column">
+
+            <div class="card">
+                <h2>📤 Upload Media</h2>
+
+                <div class="upload-section">
+                    <h3>Upload Image</h3>
+                    <input type="file" id="imageInput">
+                    <button onclick="uploadImage()" class="btn btn-primary">Process Image</button>
+                </div>
+
+                <div class="upload-section">
+                    <h3>Upload Video</h3>
+                    <input type="file" id="videoInput">
+                    <button onclick="uploadVideo()" class="btn btn-primary">Process Video</button>
+                </div>
+
+                <div class="upload-section">
+                    <h3>Live Webcam</h3>
+                    <button onclick="startWebcam()" class="btn btn-primary">🎥 Start Webcam</button>
+                    <button onclick="stopWebcam()" class="btn btn-secondary">⛔ Stop Webcam</button>
+                </div>
+
+                <button onclick="resetStats()" class="btn btn-secondary">🔄 Reset Stats</button>
+            </div>
+
+            <!-- OUTPUT -->
+            <div class="card">
+                <h2>🎬 Detection Output</h2>
+
+                <div class="output-container">
+                    <video id="videoOutput" controls></video>
+                    <video id="webcamOutput" autoplay muted playsinline></video>
+                    <img id="imageOutput">
+
+                    <div id="outputPlaceholder" class="placeholder">
+                        <p>Upload media or start webcam</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT -->
+        <div class="right-column">
+
+            <div class="card">
+                <h2>📊 Real-Time Stats</h2>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div>Total Workers</div>
+                        <div id="statTotalWorkers">0</div>
+                    </div>
+
+                    <div class="stat-card stat-safe">
+                        <div>Safe</div>
+                        <div id="statSafe">0</div>
+                    </div>
+
+                    <div class="stat-card stat-unsafe">
+                        <div>Unsafe</div>
+                        <div id="statUnsafe">0</div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div>Compliance</div>
+                        <div id="statCompliance">0%</div>
+                    </div>
+                </div>
+
+                <div class="compliance-bar-bg">
+                    <div id="complianceBar" class="compliance-bar">0%</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>📈 Compliance History</h2>
+                <canvas id="complianceChart"></canvas>
+            </div>
+
+            <div class="card">
+                <h2>⚡ FPS Monitor</h2>
+                <canvas id="fpsChart"></canvas>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- TABLE -->
+    <div class="card">
+        <h2>👷 Worker Tracking</h2>
+
+        <table class="worker-table">
+            <thead>
+            <tr>
+                <th>ID</th>
+                <th>Total</th>
+                <th>Safe</th>
+                <th>No Helmet</th>
+                <th>No Vest</th>
+                <th>Compliance</th>
+                <th>Status</th>
+            </tr>
+            </thead>
+            <tbody id="workerTableBody"></tbody>
+        </table>
+    </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
