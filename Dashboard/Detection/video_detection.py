@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-video_detection.py - WITH TRACKING
-Processes video with ByteTrack, FPS, Worker IDs, Compliance History
+video_detection.py - FIXED VERSION
+Stable video processing with correct frame size + FFmpeg conversion
 """
 
 import cv2
@@ -9,50 +9,67 @@ import os
 import subprocess
 from tracking_detector import TrackingDetector
 
+
 def process_video(input_path, output_path):
-    """Process video with full tracking"""
-    
-    # Initialize tracking detector
+
     detector = TrackingDetector()
-    
+
     temp_output = output_path.replace(".mp4", "_temp.avi")
-    
+
     cap = cv2.VideoCapture(input_path)
-    
+
     if not cap.isOpened():
         raise Exception("Could not open input video")
-    
+
+    # ✅ FIXED FPS
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps == 0:
         fps = 25
-    
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-    writer = cv2.VideoWriter(temp_output, fourcc, int(fps), (width, height))
-    
-    print("Processing video with tracking...")
-    
+
+    # 🔥 FIXED FRAME SIZE (IMPORTANT)
+    width = 1280
+    height = 720
+
+    # ✅ FIXED WRITER (MATCHES RESIZE)
+    writer = cv2.VideoWriter(
+        temp_output,
+        cv2.VideoWriter_fourcc(*'MJPG'),
+        int(fps),
+        (width, height)
+    )
+
+    print("🚀 Processing video with tracking...")
+
+    frame_count = 0
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        
-        # Process with tracking
+
+        if frame is None:
+            continue
+
+        # 🔥 Resize BEFORE processing (VERY IMPORTANT)
+        frame = cv2.resize(frame, (width, height))
+
+        # Process detection
         results = detector.process_frame(frame)
-        
+
         # Draw results
         annotated = detector.draw_results(frame, results)
-        
+
+        # ✅ WRITE SAFE FRAME
         writer.write(annotated)
-    
+
+        frame_count += 1
+
     cap.release()
     writer.release()
-    
-    print("Converting to MP4...")
-    
-    # Convert to MP4
+
+    print("🎥 Converting to MP4...")
+
+    # ✅ FFmpeg conversion (SAFE)
     result = subprocess.run(
         [
             "ffmpeg", "-y",
@@ -64,17 +81,24 @@ def process_video(input_path, output_path):
         capture_output=True,
         text=True
     )
-    
+
     if result.returncode != 0:
-        print("FFmpeg ERROR:", result.stderr)
+        print("❌ FFmpeg ERROR:", result.stderr)
         raise Exception("FFmpeg conversion failed")
-    
-    os.remove(temp_output)
-    
-    # Get tracking data
+
+    # Clean temp file
+    if os.path.exists(temp_output):
+        os.remove(temp_output)
+
+    # ✅ RETURN DASHBOARD DATA
     worker_logs = detector.get_worker_logs()
     compliance_history = detector.get_compliance_history()
-    
+
+    avg_fps = (
+        sum(detector.fps_history) / len(detector.fps_history)
+        if detector.fps_history else 0
+    )
+
     return {
         "success": True,
         "output_path": output_path,
@@ -82,6 +106,7 @@ def process_video(input_path, output_path):
             "total_workers": len(worker_logs),
             "worker_logs": worker_logs,
             "compliance_history": compliance_history,
-            "average_fps": sum(detector.fps_history) / len(detector.fps_history) if detector.fps_history else 0
+            "average_fps": round(avg_fps, 2),
+            "frames_processed": frame_count
         }
     }

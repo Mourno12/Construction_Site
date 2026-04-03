@@ -1,4 +1,4 @@
-// server.js - FIXED + REAL-TIME + BETTER STATS + WEBCAM READY
+// server.js -
 
 const express = require('express');
 const cors = require('cors');
@@ -14,8 +14,15 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 const PORT = 5000;
+
+// ✅ IMPORTANT PATH FIX
+const ROOT_DIR = path.join(__dirname, '..'); // go to Dashboard root
+const DETECTION_SCRIPT = path.join(ROOT_DIR, 'Detection', 'detection_api.py');
+
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 const OUTPUT_DIR = path.join(__dirname, 'output');
+
+// ✅ safer python command (Windows)
 const PYTHON_PATH = 'python';
 
 // ===================== MIDDLEWARE =====================
@@ -40,7 +47,6 @@ const storage = multer.diskStorage({
         cb(null, `${file.fieldname}_${Date.now()}${ext}`);
     }
 });
-
 const upload = multer({ storage });
 
 // ===================== GLOBAL STATE =====================
@@ -57,31 +63,57 @@ let trackingData = {
 };
 
 // ===================== PYTHON EXECUTION =====================
-function executePython(script, args = []) {
+function executePython(mode, input, output) {
     return new Promise((resolve, reject) => {
-        const py = spawn(PYTHON_PATH, [script, ...args]);
 
-        let output = '';
-        let error = '';
+        console.log("▶ Running Python:", DETECTION_SCRIPT);
 
-        py.stdout.on('data', d => output += d.toString());
-        py.stderr.on('data', d => error += d.toString());
+        const py = spawn(PYTHON_PATH, [
+            DETECTION_SCRIPT,
+            mode,
+            input,
+            output
+        ], {
+            cwd: ROOT_DIR   // ✅ VERY IMPORTANT
+        });
 
-        py.on('close', code => {
+        let stdout = '';
+        let stderr = '';
+
+        py.stdout.on('data', (data) => {
+            stdout += data.toString();
+            console.log("PYTHON OUT:", data.toString());
+        });
+
+        py.stderr.on('data', (data) => {
+            stderr += data.toString();
+            console.error("PYTHON ERR:", data.toString());
+        });
+
+        py.on('close', (code) => {
+            console.log("Python exit code:", code);
+
             if (code !== 0) {
-                console.error("Python Error:", error);
-                return reject(error);
+                return reject(stderr || "Python failed");
             }
 
-            // Extract JSON safely
-            const match = output.match(/\{[\s\S]*\}/);
-            if (!match) return reject("No JSON output");
+            // ✅ Extract JSON safely
+            const match = stdout.match(/\{[\s\S]*\}/);
+
+            if (!match) {
+                return reject("No JSON output from Python");
+            }
 
             try {
-                resolve(JSON.parse(match[0]));
+                const json = JSON.parse(match[0]);
+                resolve(json);
             } catch (e) {
-                reject("Invalid JSON");
+                reject("Invalid JSON from Python");
             }
+        });
+
+        py.on('error', (err) => {
+            reject("Failed to start Python: " + err.message);
         });
     });
 }
@@ -93,7 +125,7 @@ function computeStats(workerLogs) {
     let unsafe = 0;
 
     workerLogs.forEach(w => {
-        if (w.compliance_rate >= 80) safe++;
+        if ((w.compliance_rate || 100) >= 80) safe++;
         else unsafe++;
     });
 
@@ -105,11 +137,6 @@ function computeStats(workerLogs) {
         unsafe_workers: unsafe,
         compliance_rate: compliance
     };
-}
-
-// ===================== RUN DETECTION =====================
-async function runDetection(mode, input, output) {
-    return await executePython('Detection/detection_api.py', [mode, input, output]);
 }
 
 // ===================== ROUTES =====================
@@ -125,7 +152,7 @@ app.post('/api/process_image', upload.single('image'), async (req, res) => {
         const outputFile = `image_${Date.now()}.jpg`;
         const output = path.join(OUTPUT_DIR, outputFile);
 
-        const result = await runDetection('image', input, output);
+        const result = await executePython('image', input, output);
 
         res.json({
             success: true,
@@ -134,6 +161,7 @@ app.post('/api/process_image', upload.single('image'), async (req, res) => {
         });
 
     } catch (err) {
+        console.error(err);
         res.status(500).json({ success: false, message: err.toString() });
     }
 });
@@ -145,11 +173,10 @@ app.post('/api/process_video', upload.single('video'), async (req, res) => {
         const outputFile = `video_${Date.now()}.mp4`;
         const output = path.join(OUTPUT_DIR, outputFile);
 
-        const result = await runDetection('video', input, output);
+        const result = await executePython('video', input, output);
 
         if (result.tracking_data) {
             const logs = result.tracking_data.worker_logs || [];
-
             const stats = computeStats(logs);
 
             trackingData = {
@@ -170,16 +197,9 @@ app.post('/api/process_video', upload.single('video'), async (req, res) => {
         });
 
     } catch (err) {
+        console.error(err);
         res.status(500).json({ success: false, message: err.toString() });
     }
-});
-
-// ===================== WEBCAM (NEW 🔥) =====================
-app.get('/api/webcam', (req, res) => {
-    res.json({
-        success: true,
-        stream_url: "http://localhost:5000/webcam_stream"
-    });
 });
 
 // ===================== RESET =====================
