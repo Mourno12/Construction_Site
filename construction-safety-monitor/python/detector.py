@@ -28,13 +28,18 @@ def log(message, level="info"):
 
 
 class Detection:
-    """A single detected person in one frame, pre-tracking."""
+    """A single detected person or object in one frame, pre-tracking."""
 
-    __slots__ = ("bbox", "confidence")
+    __slots__ = ("bbox", "confidence", "cls_id")
 
-    def __init__(self, bbox, confidence):
+    def __init__(self, bbox, confidence, cls_id=config.YOLO_PERSON_CLASS_ID):
         self.bbox = bbox                # (x1, y1, x2, y2) ints
         self.confidence = confidence    # float 0-1
+        self.cls_id = cls_id            # YOLO class id - person by default; see config.YOLO_OBJECT_CLASS_IDS
+
+    @property
+    def is_person(self):
+        return self.cls_id == config.YOLO_PERSON_CLASS_ID
 
 
 class YOLOPersonDetector:
@@ -49,13 +54,16 @@ class YOLOPersonDetector:
         """
         Runs detection + ByteTrack tracking in a single call (Ultralytics
         handles association internally via `tracker=bytetrack.yaml`).
-        Returns list of (track_id, Detection).
+        Tracks "person" plus any classes in config.YOLO_OBJECT_CLASS_IDS
+        (empty by default - see that setting for how to enable object-fall
+        detection). Returns list of (track_id, Detection).
         """
+        track_classes = [config.YOLO_PERSON_CLASS_ID] + list(config.YOLO_OBJECT_CLASS_IDS)
         results = self.model.track(
             frame,
             persist=True,
             tracker=config.TRACKER_CONFIG,
-            classes=[config.YOLO_PERSON_CLASS_ID],
+            classes=track_classes,
             conf=config.YOLO_CONF_THRESHOLD,
             iou=config.YOLO_IOU_THRESHOLD,
             verbose=False,
@@ -70,8 +78,9 @@ class YOLOPersonDetector:
         for i, box in enumerate(r.boxes):
             x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].tolist()]
             conf = float(box.conf[0]) if box.conf is not None else 0.0
+            cls_id = int(box.cls[0].item()) if box.cls is not None else config.YOLO_PERSON_CLASS_ID
             track_id = int(ids[i].item()) if ids is not None else -1
-            out.append((track_id, Detection((x1, y1, x2, y2), conf)))
+            out.append((track_id, Detection((x1, y1, x2, y2), conf, cls_id)))
         return out
 
 

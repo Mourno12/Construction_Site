@@ -1,22 +1,34 @@
 # SiteGuard — Construction Site Safety Monitoring System
 
-Real-time AI-powered PPE (helmet + safety vest) compliance monitoring for
-construction sites. Detects workers, checks PPE compliance, tracks each
-worker with a persistent ID, and streams everything to a live dashboard —
-from a webcam, an uploaded video, or an uploaded image.
+Real-time AI-powered construction site safety monitoring. Detects workers,
+checks 5 PPE items (helmet, vest, gloves, boots, mask), flags a worker who's
+fallen down, flags a falling object, tracks each worker with a persistent
+ID, and streams everything to a live dashboard — from a webcam, an uploaded
+video, or an uploaded image.
 
 ## Highlights
 
-- **YOLOv12n** (Ultralytics) person detection — attention-centric architecture for strong accuracy
-- **Fine-tuned Vision Transformer (ViT)** for helmet + vest classification (~95% accuracy on a properly trained checkpoint)
+- **8 things detected/tracked per frame:**
+  1. Helmet or no helmet
+  2. Vest or no vest
+  3. Gloves or no gloves
+  4. Boots or no boots
+  5. Mask or no mask
+  6. Persistent worker tracking (ByteTrack / IOU fallback)
+  7. Worker fallen down
+  8. Object falling (tools/materials/debris)
+- **YOLOv12n** (Ultralytics) person + (optionally) object detection — attention-centric architecture for strong accuracy
+- **Fine-tuned Vision Transformer (ViT)**, one model, six sigmoid outputs: helmet, vest, gloves, boots, mask, and "fallen" — all trained the same way, on labelled worker-crop images (see **Training your own ViT classifier** below)
 - **ByteTrack** persistent worker IDs — a worker keeps the same ID even after leaving and re-entering frame
+- **Object-fall detection**: a velocity-based rule on top of the (trainable) object detector + tracker — falling is a property of motion across frames, not of one static image, so there's no single-frame model to train for "is this falling"; see **Object-fall detection** below for how the detector side is trained
+- **Full-screen alerts**: a pulsing red screen-edge flash + a large banner (title + detail, differs for PPE violation / worker down / falling object), plus a 30-second soft repeating audio pulse — built to be noticed from across a room, not just by whoever's looking at the screen; a mute toggle lives in the top bar
 - **Node.js + Express + WebSocket** backend — sub-100ms streaming to the UI
 - **3 input modes**: live webcam, video upload, image upload
 - **Accounts**: register/log in/log out (JWT-based); the first account created becomes the site admin
-- **Persistent logs**: every session, per-worker compliance history, and violation (with an evidence snapshot) is saved to disk and survives server restarts
+- **Persistent logs**: every session, per-worker compliance history, and violation (PPE / fall / object-fall, each with an evidence snapshot) is saved to disk and survives server restarts
 - **CSV/JSON export**: download the violation log, a session's worker log, or the full session history straight from the dashboard
-- **Full ViT training pipeline** included (`python/train_vit.py`) for transfer learning on your own PPE dataset
-- **Runs out of the box in "Demo Mode"** — even before you install the full ML stack or train a model, the app runs end-to-end using an OpenCV person detector + colour-heuristic PPE classifier, so you always have something to demo. Swap in the real models any time.
+- **Full ViT training pipeline** included (`python/train_vit.py`) for transfer learning on your own PPE + fall dataset
+- **Runs out of the box in "Demo Mode"** — even before you install the full ML stack or train a model, the app runs end-to-end using an OpenCV person detector + a colour/geometry-heuristic classifier (PPE colours + bounding-box aspect ratio for "fallen"), so you always have something to demo. Swap in the real trained models any time.
 
 > **Heads up on YOLOv12:** Ultralytics' own docs note that YOLO12's
 > attention-centric blocks trade some CPU throughput and training stability
@@ -37,9 +49,10 @@ Node.js + Express + WebSocket  (server/)
    ▼                                     ▼
 Python inference worker              data/siteguard.db + data/violations/*.jpg
 (python/inference_worker.py)         (users, sessions, worker history,
-   ├─ detector.py                     violations with evidence snapshots)
-   ├─ ppe_classifier.py
-   ├─ tracker.py
+   ├─ detector.py (person + object)   violations with evidence snapshots,
+   ├─ ppe_classifier.py (6 labels)     each tagged kind: ppe | fall | object_fall)
+   ├─ tracker.py (fallback)
+   ├─ fall_events.py (object velocity)
    └─ drawing.py
 ```
 
@@ -61,13 +74,14 @@ construction-safety-monitor/
 │   └── utils/                  pythonBridge.js, sessionManager.js, db.js, auth.js
 ├── python/                 ML pipeline
 │   ├── inference_worker.py  main NDJSON worker process (spawned by Node)
-│   ├── detector.py          YOLOv12n + fallback HOG detector
-│   ├── ppe_classifier.py    fine-tuned ViT + fallback colour heuristic
-│   ├── tracker.py            fallback IOU tracker
+│   ├── detector.py          YOLOv12n (person + optional object class) + fallback HOG detector
+│   ├── ppe_classifier.py    fine-tuned ViT (6 labels) + fallback colour/geometry heuristic
+│   ├── tracker.py            fallback IOU tracker (person-only, Demo Mode)
+│   ├── fall_events.py        velocity-based object-fall detector for tracked objects
 │   ├── drawing.py            annotation / HUD drawing helpers
-│   ├── train_vit.py          full ViT training pipeline
-│   ├── dataset.py            PPE dataset loader + skeleton generator
-│   ├── config.py             all thresholds / paths / performance knobs
+│   ├── train_vit.py          full ViT training pipeline (helmet/vest/gloves/boots/mask/fallen)
+│   ├── dataset.py            dataset loader + skeleton generator
+│   ├── config.py             all labels / thresholds / paths / performance knobs
 │   ├── requirements.txt
 │   └── models/                put your trained checkpoint at models/vit_ppe_classifier/
 ├── public/                  Dashboard frontend (vanilla HTML/CSS/JS)
@@ -201,18 +215,49 @@ curl "http://localhost:3000/api/logs/violations/export?format=csv&mine=true" \
 If `ultralytics`/`torch`/`transformers` aren't installed, or no fine-tuned
 ViT checkpoint is found yet, the pipeline **automatically falls back** to:
 
-| Stage       | Full pipeline              | Demo Mode fallback                     |
-|-------------|-----------------------------|-----------------------------------------|
-| Detection   | YOLOv12n                   | OpenCV HOG person detector             |
-| Tracking    | ByteTrack (via ultralytics) | Simple IOU-matching tracker            |
-| PPE check   | Fine-tuned ViT               | HSV colour-heuristic (hard-hat/hi-vis colours) |
+| Stage             | Full pipeline                | Demo Mode fallback                                          |
+|-------------------|-------------------------------|----------------------------------------------------------------|
+| Detection         | YOLOv12n                     | OpenCV HOG person detector                                    |
+| Tracking          | ByteTrack (via ultralytics)   | Simple IOU-matching tracker                                    |
+| PPE check (×5)    | Fine-tuned ViT                 | HSV colour-heuristic per item (hard-hat/hi-vis/glove/boot/mask colours) |
+| Fallen detection  | Fine-tuned ViT ("fallen" output) | Bounding-box aspect ratio (wider-than-tall = fallen)         |
+| Object-fall       | Same tracked-object velocity rule either way — see below | (n/a) |
 
 A **"DEMO MODE"** badge appears on the live feed and dashboard whenever any
 fallback is active, so it's always clear which mode you're running in. This
 means you can demo the entire product — UI, tracking, alerts, worker log,
 accounts, and persisted history — before you've trained anything.
 
-## Training your own ViT PPE classifier
+Note that **object-fall detection only ever runs on the real YOLOv12n path**:
+the fallback HOG detector only finds people, so there's nothing for it to
+track as a falling object in Demo Mode (see **Object-fall detection**
+below).
+
+## Alerts
+
+Three alert kinds, all persisted to the violation log with an evidence
+snapshot: `ppe` (missing required PPE for `ALERT_STREAK_FRAMES` consecutive
+frames), `fall` (worker detected as fallen for the same streak), and
+`object_fall` (a tracked object falling — see **Object-fall detection**).
+Each one:
+- Flashes a pulsing red glow around the whole viewport plus a large banner
+  (title + specifics, e.g. "Worker #4 missing helmet & vest" /
+  "Worker Down" / "Falling Object") — sized to be noticed from across a
+  room, not just by whoever's looking at the screen right now.
+- Plays a soft repeating audio pulse for 30 seconds (a fresh alert re-arms
+  the full 30s rather than queuing behind an old one).
+- Adds an entry to the Violation Alerts feed and the Session History
+  evidence gallery, colour-coded per kind (red = PPE, magenta = fall,
+  amber = object fall).
+
+A speaker-icon button in the top bar mutes/unmutes the sound (persisted
+across sessions); muting also cuts an in-progress 30s pulse immediately.
+
+## Training your own ViT classifier
+
+One ViT checkpoint handles all 6 labels — helmet, vest, gloves, boots,
+mask, and fallen — as six sigmoid outputs, in the order defined by
+`config.ALL_TRAINABLE_LABELS`.
 
 1. Generate the dataset skeleton:
    ```bash
@@ -222,26 +267,73 @@ accounts, and persisted history — before you've trained anything.
 2. Drop your worker-crop images into `python/dataset/images/`, and create
    `train_annotations.csv` / `val_annotations.csv` with columns:
    ```
-   filename,helmet,vest
-   img_0001.jpg,1,1
-   img_0002.jpg,0,1
+   filename,helmet,vest,gloves,boots,mask,fallen
+   img_0001.jpg,1,1,0,1,0,0
+   img_0002.jpg,0,1,1,1,0,0
+   img_0003.jpg,1,1,1,1,1,1
    ```
-   Tip: run the app in Demo Mode on your own site footage first, export the
-   per-worker crops, and hand-correct the heuristic labels — much faster
-   than annotating from a blank slate.
+   `fallen` = 1 for a crop where the worker is down/lying/slumped, not
+   standing. Tip: run the app in Demo Mode on your own site footage first,
+   export the per-worker crops, and hand-correct the heuristic labels —
+   much faster than annotating from a blank slate.
 3. Train:
    ```bash
    python train_vit.py --epochs 15 --batch_size 32
    ```
-   The best checkpoint (by validation F1) is saved to
-   `python/models/vit_ppe_classifier/`.
+   The best checkpoint (by validation F1, computed across all 6 labels) is
+   saved to `python/models/vit_ppe_classifier/`.
 4. Restart `npm start` — the app will detect the checkpoint and switch out
-   of Demo Mode automatically.
+   of Demo Mode automatically for PPE + fall detection.
+
+Want to track a different set of items (e.g. drop `mask`, add `earmuffs`)?
+Edit `PPE_LABELS` in `python/config.py` — `dataset.py` and `train_vit.py`
+both read that list dynamically, so the CSV columns and model output count
+follow automatically. Also check `REQUIRED_PPE_ITEMS` there: it controls
+which items must be present for a worker to count as "compliant" (green,
+not just logged) — trim it if e.g. gloves/mask aren't mandatory on your site.
+
+## Object-fall detection
+
+Detecting an object mid-fall doesn't work like PPE classification: a single
+still crop of an object in mid-air often looks identical to one sitting in
+a normal position — "falling" is a property of *motion across frames*, not
+of one frame. So this feature is split into two parts:
+
+1. **Trainable part — detecting the object at all.** The stock
+   `yolo12n.pt` COCO weights only know "person" (plus generic COCO
+   classes); there's no "construction debris/tool" class. Fine-tune your
+   own YOLOv12n with an extra class for whatever you want watched (a
+   dropped tool, loose material, a falling brick, etc.), the same way
+   you'd train any Ultralytics YOLO model, outside this repo:
+   ```bash
+   yolo detect train model=yolo12n.pt data=your_data.yaml epochs=100 imgsz=640
+   ```
+   `your_data.yaml` needs images + bounding-box label files for your object
+   class(es), plus `person` if you want to keep detecting people with the
+   same model (or point `YOLO_WEIGHTS` at this new model and keep
+   `YOLO_PERSON_CLASS_ID` matching whatever id your dataset assigns to
+   "person").
+2. **Physics rule — deciding it's "falling".** Once that model can detect
+   and track the object (via the same ByteTrack path used for people),
+   `python/fall_events.py` watches each tracked object's vertical bbox-centre
+   position frame over frame. If it's moving down fast enough
+   (`OBJECT_FALL_MIN_DOWNWARD_PX_PER_FRAME`) for long enough
+   (`OBJECT_FALL_STREAK_FRAMES`, both in `config.py`), that's an
+   "object_fall" alert — debounced the same way PPE violations are, so a
+   sustained fall reports once, not once per frame.
+
+To turn it on: set `YOLO_OBJECT_CLASS_IDS` in `config.py` (or the
+`YOLO_OBJECT_CLASS_IDS` env var, comma-separated) to your fine-tuned
+model's object class id(s), and point `YOLO_WEIGHTS` at that model. Left
+empty (the default), object-fall detection is simply inert — no object
+tracks ever exist to evaluate, and person detection/PPE/fall checking work
+exactly as before.
 
 ## Using your own YOLO weights
 
-Fine-tuned a custom YOLOv12n on your own site's camera angles/PPE colours?
-Point `python/config.py`'s `YOLO_WEIGHTS` at your `.pt` file (or set the
+Fine-tuned a custom YOLOv12n on your own site's camera angles/PPE colours,
+or added an object class for object-fall detection? Point
+`python/config.py`'s `YOLO_WEIGHTS` at your `.pt` file (or set the
 `YOLO_WEIGHTS` environment variable before starting the server).
 
 ## Notes on the 3 input modes

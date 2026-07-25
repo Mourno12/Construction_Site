@@ -15,6 +15,7 @@
   'use strict';
 
   const AUTH_STORAGE_KEY = 'siteguard_auth'; // { token, username, role }
+  const SOUND_STORAGE_KEY = 'siteguard_sound_enabled';
 
   const els = {
     authGate: document.getElementById('authGate'),
@@ -33,6 +34,9 @@
     engineDot: document.getElementById('engineDot'),
     engineStatusText: document.getElementById('engineStatusText'),
     clockChip: document.getElementById('clockChip'),
+    soundToggleBtn: document.getElementById('soundToggleBtn'),
+    soundWaves: document.getElementById('soundWaves'),
+    soundMuteSlash: document.getElementById('soundMuteSlash'),
 
     modeBtns: Array.from(document.querySelectorAll('.mode-btn')),
     sourcePanes: Array.from(document.querySelectorAll('.source-pane')),
@@ -84,6 +88,11 @@
 
     toastStack: document.getElementById('toastStack'),
     captureCanvas: document.getElementById('captureCanvas'),
+
+    bigAlertOverlay: document.getElementById('bigAlertOverlay'),
+    bigAlertBanner: document.getElementById('bigAlertBanner'),
+    bigAlertTitle: document.getElementById('bigAlertTitle'),
+    bigAlertDetail: document.getElementById('bigAlertDetail'),
   };
 
   const state = {
@@ -104,10 +113,12 @@
     lastToastMessage: null,
     lastToastAt: 0,
     historyScope: 'all', // 'all' | 'mine' - only meaningful for admins; operators are always scoped server-side
+    soundEnabled: localStorage.getItem(SOUND_STORAGE_KEY) !== 'off',
   };
 
   const WEBCAM_CAPTURE_INTERVAL_MS = 130; // ~7-8 fps upload cadence; server processes each frame
   const MAX_TRACKED_WORKERS = 300; // safety cap - a flaky fallback tracker can mint many spurious IDs
+  const PPE_ITEM_KEYS = ['helmet', 'vest', 'gloves', 'boots', 'mask']; // mirrors python/config.py's PPE_LABELS
 
   // ==================================================================
   // Auth: storage helpers
@@ -273,6 +284,111 @@
   tickClock();
 
   // ==================================================================
+  // Alert sound (Web Audio API - no asset file needed)
+  // ==================================================================
+  let audioCtx = null;
+
+  function ensureAudioCtx() {
+    if (!audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      audioCtx = new Ctx();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    return audioCtx;
+  }
+
+  // A soft repeating pulse, not a blaring siren - noticeable in a quiet
+  // room without being jarring, sustained for 30s so it doesn't disappear
+  // before anyone reacts to it.
+  const ALERT_SOUND_DURATION_MS = 30000;
+  const ALERT_SOUND_PULSE_INTERVAL_MS = 1000;
+  let alertSoundInterval = null;
+  let alertSoundStopTimer = null;
+
+  function playSoftBlip() {
+    const ctx = ensureAudioCtx();
+    if (!ctx) return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 740;
+      const t0 = ctx.currentTime;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.14, t0 + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + 0.25);
+    } catch {
+      // Web Audio can throw in odd browser states (e.g. context closed) -
+      // an alert sound failing silently is far better than breaking the feed.
+    }
+  }
+
+  function stopAlertSound() {
+    if (alertSoundInterval) clearInterval(alertSoundInterval);
+    if (alertSoundStopTimer) clearTimeout(alertSoundStopTimer);
+    alertSoundInterval = null;
+    alertSoundStopTimer = null;
+  }
+
+  function playAlertSound() {
+    if (!state.soundEnabled) return;
+    // A fresh violation re-arms the full 30s window rather than queuing
+    // behind (or overlapping with) whatever pulse cycle was already running.
+    stopAlertSound();
+    playSoftBlip();
+    alertSoundInterval = setInterval(playSoftBlip, ALERT_SOUND_PULSE_INTERVAL_MS);
+    alertSoundStopTimer = setTimeout(stopAlertSound, ALERT_SOUND_DURATION_MS);
+  }
+
+  // ==================================================================
+  // Big alert - a full-viewport flash + banner for violations, loud and
+  // obvious enough to notice from across a room, not just a corner toast.
+  // ==================================================================
+  let bigAlertHideTimer = null;
+
+  function triggerBigAlert(title, text) {
+    els.bigAlertTitle.textContent = title;
+    els.bigAlertDetail.textContent = text;
+    els.bigAlertOverlay.hidden = false;
+    els.bigAlertBanner.hidden = false;
+    els.bigAlertOverlay.classList.add('show');
+    els.bigAlertBanner.classList.add('show');
+
+    // A burst of alerts (several workers tripping close together) should
+    // keep the banner up, not restart-then-cut-off - so each call just
+    // pushes the hide timer further out rather than layering timers.
+    if (bigAlertHideTimer) clearTimeout(bigAlertHideTimer);
+    bigAlertHideTimer = setTimeout(() => {
+      els.bigAlertOverlay.classList.remove('show');
+      els.bigAlertBanner.classList.remove('show');
+      bigAlertHideTimer = null;
+    }, 3200);
+  }
+
+  function applySoundButtonState() {
+    const muted = !state.soundEnabled;
+    els.soundToggleBtn.setAttribute('aria-pressed', String(muted));
+    els.soundToggleBtn.title = muted ? 'Unmute alert sound' : 'Mute alert sound';
+    els.soundWaves.hidden = muted;
+    els.soundMuteSlash.hidden = !muted;
+  }
+
+  els.soundToggleBtn.addEventListener('click', () => {
+    state.soundEnabled = !state.soundEnabled;
+    localStorage.setItem(SOUND_STORAGE_KEY, state.soundEnabled ? 'on' : 'off');
+    applySoundButtonState();
+    if (state.soundEnabled) ensureAudioCtx(); // unlock on this user gesture
+    else stopAlertSound(); // muting should cut an in-progress pulse, not wait it out
+  });
+
+  applySoundButtonState();
+
+  // ==================================================================
   // Engine status
   // ==================================================================
   function setEngineStatus(kind, text) {
@@ -415,11 +531,55 @@
     els.exportWorkersCsvBtn.disabled = !state.sessionId;
     els.exportWorkersJsonBtn.disabled = !state.sessionId;
 
-    (stats.newAlerts || []).forEach((trackId) => {
-      const w = state.workers.get(trackId);
-      addAlert(trackId, w);
-      showToast(`Worker #${trackId} flagged: missing PPE`);
+    const newAlerts = stats.newAlerts || [];
+    if (newAlerts.length) {
+      playAlertSound();
+      if (newAlerts.length === 1) {
+        const info = describeAlert(newAlerts[0]);
+        triggerBigAlert(info.title, info.detail);
+      } else {
+        const kinds = new Set(newAlerts.map((a) => a.kind));
+        const title = kinds.size === 1 ? describeAlert(newAlerts[0]).title : 'Multiple Safety Alerts';
+        triggerBigAlert(title, `${newAlerts.length} new alerts flagged`);
+      }
+    }
+    newAlerts.forEach((alert) => {
+      const info = describeAlert(alert);
+      addAlert(alert, info);
+      showToast(info.toast);
     });
+  }
+
+  // Builds the title/detail/toast/css-class text for one alert, based on
+  // its kind ('ppe' | 'fall' | 'object_fall') and, for PPE alerts, which
+  // items are currently missing on that worker.
+  function describeAlert(alert) {
+    const { trackId, kind } = alert;
+    if (kind === 'fall') {
+      return {
+        title: 'Worker Down',
+        detail: `Worker #${trackId} has fallen`,
+        toast: `Worker #${trackId} flagged: fall detected`,
+        cssClass: 'alert-fall',
+      };
+    }
+    if (kind === 'object_fall') {
+      return {
+        title: 'Falling Object',
+        detail: `Object #${trackId} is falling`,
+        toast: `Falling object detected (#${trackId})`,
+        cssClass: 'alert-object',
+      };
+    }
+    const w = state.workers.get(trackId);
+    const missing = w ? PPE_ITEM_KEYS.filter((key) => !w[key]) : [];
+    const missingText = missing.length ? missing.join(' & ') : 'PPE';
+    return {
+      title: 'Safety Violation',
+      detail: `Worker #${trackId} missing ${missingText}`,
+      toast: `Worker #${trackId} flagged: missing PPE`,
+      cssClass: 'alert-ppe',
+    };
   }
 
   function formatDuration(seconds) {
@@ -436,7 +596,9 @@
     for (let i = 0; i < toRemove; i++) {
       const trackId = entries[i][0];
       state.workers.delete(trackId);
-      state.alertElementsByTrackId.delete(trackId);
+      // A given trackId could have triggered either alert kind over its lifetime.
+      state.alertElementsByTrackId.delete(`ppe:${trackId}`);
+      state.alertElementsByTrackId.delete(`fall:${trackId}`);
     }
   }
 
@@ -448,23 +610,27 @@
     els.trackedCountHint.textContent = `${rows.length} tracked`;
 
     if (rows.length === 0) {
-      els.workerTableBody.innerHTML = '<tr class="table-empty-row"><td colspan="8">Worker tracking data will appear here once monitoring starts.</td></tr>';
+      els.workerTableBody.innerHTML = '<tr class="table-empty-row"><td colspan="7">Worker tracking data will appear here once monitoring starts.</td></tr>';
       return;
     }
 
     els.workerTableBody.innerHTML = rows.map((w) => {
       const flash = w.isNewAlert ? ' row-flash' : '';
-      const rowClass = (w.compliant ? '' : 'row-violation') + flash;
+      const rowClass = (w.fallen ? 'row-fallen' : (w.compliant ? '' : 'row-violation')) + flash;
       const firstSeenLabel = w.firstSeen ? new Date(w.firstSeen * 1000).toLocaleTimeString() : '—';
       const durationLabel = w.firstSeen && w.lastSeen ? formatDuration(w.lastSeen - w.firstSeen) : '—';
+      const missing = PPE_ITEM_KEYS.filter((key) => !w[key]);
+      const missingLabel = w.fallen ? '—' : (missing.length ? missing.map((m) => m[0].toUpperCase() + m.slice(1)).join(', ') : 'None');
+      const statusPill = w.fallen
+        ? '<span class="pill pill-fallen">● DOWN</span>'
+        : (w.compliant
+          ? '<span class="pill pill-safe">● SAFE</span>'
+          : '<span class="pill pill-unsafe">● VIOLATION</span>');
       return `
         <tr class="${rowClass}">
           <td>#${w.trackId}</td>
-          <td>${w.compliant
-            ? '<span class="pill pill-safe">● SAFE</span>'
-            : '<span class="pill pill-unsafe">● VIOLATION</span>'}</td>
-          <td class="${w.helmet ? 'pill-ok' : 'pill-missing'}">${w.helmet ? 'OK' : 'MISSING'}</td>
-          <td class="${w.vest ? 'pill-ok' : 'pill-missing'}">${w.vest ? 'OK' : 'MISSING'}</td>
+          <td>${statusPill}</td>
+          <td class="${missing.length && !w.fallen ? 'pill-missing' : 'pill-ok'}">${missingLabel}</td>
           <td>${w.complianceRate}%</td>
           <td>${w.framesSeen}</td>
           <td>${firstSeenLabel}</td>
@@ -473,7 +639,7 @@
     }).join('');
   }
 
-  function addAlert(trackId, workerData) {
+  function addAlert(alert, info) {
     state.alertCount += 1;
     els.alertCount.textContent = state.alertCount;
 
@@ -481,17 +647,14 @@
     if (emptyEl) emptyEl.remove();
 
     const li = document.createElement('li');
-    li.className = 'alert-item';
-    const missing = [];
-    if (workerData && !workerData.helmet) missing.push('helmet');
-    if (workerData && !workerData.vest) missing.push('vest');
+    li.className = `alert-item ${info.cssClass}`;
     li.innerHTML = `
       <span class="dot"></span>
-      <span class="alert-text">Worker #${trackId} missing ${missing.join(' & ') || 'PPE'}</span>
+      <span class="alert-text">${info.detail}</span>
       <span class="alert-time">${new Date().toLocaleTimeString()}</span>
     `;
     els.alertFeed.prepend(li);
-    state.alertElementsByTrackId.set(trackId, li);
+    state.alertElementsByTrackId.set(`${alert.kind}:${alert.trackId}`, li);
 
     while (els.alertFeed.children.length > 30) {
       els.alertFeed.removeChild(els.alertFeed.lastChild);
@@ -500,12 +663,14 @@
 
   function attachViolationThumbnail(violation) {
     if (!violation || !violation.snapshot) return;
-    const li = state.alertElementsByTrackId.get(violation.trackId);
+    const li = state.alertElementsByTrackId.get(`${violation.kind}:${violation.trackId}`);
     if (!li || li.querySelector('.alert-thumb')) return;
     const img = document.createElement('img');
     img.className = 'alert-thumb';
     img.src = violation.snapshot;
-    img.alt = `Evidence snapshot for worker #${violation.trackId}`;
+    img.alt = violation.kind === 'object_fall'
+      ? `Evidence snapshot for object #${violation.trackId}`
+      : `Evidence snapshot for worker #${violation.trackId}`;
     li.prepend(img);
   }
 
@@ -586,15 +751,30 @@
 
   function violationCard(v) {
     const time = new Date(v.timestamp).toLocaleString();
-    const missing = [!v.helmet && 'helmet', !v.vest && 'vest'].filter(Boolean).join(' & ') || 'PPE';
+    const kind = v.kind || 'ppe';
+    let title, altText;
+    if (kind === 'fall') {
+      title = `Worker #${v.trackId} — fell down`;
+      altText = `Fall evidence for worker #${v.trackId}`;
+    } else if (kind === 'object_fall') {
+      title = `Object #${v.trackId} — falling object`;
+      altText = `Falling-object evidence for object #${v.trackId}`;
+    } else {
+      const missing = (v.missingItems && v.missingItems.length
+        ? v.missingItems
+        : [!v.helmet && 'helmet', !v.vest && 'vest'].filter(Boolean)
+      ).join(' & ') || 'PPE';
+      title = `Worker #${v.trackId} — missing ${missing}`;
+      altText = `Violation evidence for worker #${v.trackId}`;
+    }
     const img = v.snapshot
-      ? `<img src="${v.snapshot}" alt="Violation evidence for worker #${v.trackId}" />`
+      ? `<img src="${v.snapshot}" alt="${altText}" />`
       : `<div style="aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-size:11px;">No snapshot</div>`;
     return `
-      <li class="violation-card">
+      <li class="violation-card kind-${kind}">
         ${img}
         <div class="violation-card-body">
-          <span class="vc-title">Worker #${v.trackId} — missing ${missing}</span>
+          <span class="vc-title">${title}</span>
           <span class="vc-time">${time}</span>
         </div>
       </li>`;
@@ -640,6 +820,7 @@
   els.webcamStopBtn.addEventListener('click', stopWebcam);
 
   async function startWebcam() {
+    ensureAudioCtx(); // unlock audio on this user gesture, before any alert needs to play
     try {
       state.webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: 960, height: 540 } });
     } catch (e) {
@@ -709,6 +890,7 @@
 
   async function startVideoProcessing() {
     if (!state.videoFile) return;
+    ensureAudioCtx(); // unlock audio on this user gesture, before any alert needs to play
     els.videoStartBtn.disabled = true;
     els.videoStartBtn.textContent = 'Uploading…';
 
@@ -784,6 +966,7 @@
 
   async function analyzeImage() {
     if (!state.imageFile) return;
+    ensureAudioCtx(); // unlock audio on this user gesture, before any alert needs to play
     els.imageStartBtn.disabled = true;
     els.imageStartBtn.textContent = 'Analyzing…';
 
@@ -821,6 +1004,7 @@
   }
 
   function stopEverything() {
+    stopAlertSound();
     if (state.webcamCaptureTimer) clearInterval(state.webcamCaptureTimer);
     state.webcamCaptureTimer = null;
     if (state.webcamStream) {

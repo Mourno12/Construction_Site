@@ -23,6 +23,8 @@
   --unsafe: #ff5c5c;
   --unsafe-soft: rgba(255, 92, 92, 0.13);
   --warn: #ffb020;
+  --fallen: #d946ef;
+  --fallen-soft: rgba(217, 70, 239, 0.14);
 
   --text: #edf0f2;
   --text-dim: #8d97a2;
@@ -405,6 +407,10 @@ body {
 .btn-ghost { background: transparent; border-color: var(--border); color: var(--text-dim); }
 .btn-ghost:hover { color: var(--unsafe); border-color: var(--unsafe); }
 
+.btn-icon { padding: 8px; }
+.btn-icon svg { display: block; }
+.btn-icon[aria-pressed="true"] { color: var(--unsafe); border-color: var(--unsafe); }
+
 /* -------------------------------------------------------------------- */
 /* Stat cards                                                           */
 /* -------------------------------------------------------------------- */
@@ -487,6 +493,8 @@ body {
 @keyframes alert-in { from { opacity: 0; transform: translateX(6px); } to { opacity: 1; transform: translateX(0); } }
 
 .alert-item .dot { background: var(--unsafe); box-shadow: 0 0 6px var(--unsafe); }
+.alert-item.alert-fall .dot { background: var(--fallen); box-shadow: 0 0 6px var(--fallen); }
+.alert-item.alert-object .dot { background: var(--hazard); box-shadow: 0 0 6px var(--hazard); }
 .alert-item .alert-text { flex: 1; }
 .alert-item .alert-time { color: var(--text-dim); font-family: var(--font-mono); font-size: 11px; }
 
@@ -515,6 +523,7 @@ body {
 .worker-table tbody tr { transition: background 0.2s; }
 .worker-table tbody tr:hover { background: var(--panel-alt); }
 .worker-table tbody tr.row-violation { background: var(--unsafe-soft); }
+.worker-table tbody tr.row-fallen { background: var(--fallen-soft); }
 .worker-table tbody tr.row-flash { animation: row-flash 0.9s ease-out; }
 @keyframes row-flash { 0% { background: rgba(255,92,92,0.35); } 100% { background: transparent; } }
 
@@ -532,6 +541,7 @@ body {
 }
 .pill-safe { background: var(--safe-soft); color: var(--safe); border: 1px solid rgba(61,220,132,0.35); }
 .pill-unsafe { background: var(--unsafe-soft); color: var(--unsafe); border: 1px solid rgba(255,92,92,0.35); }
+.pill-fallen { background: var(--fallen-soft); color: var(--fallen); border: 1px solid rgba(217,70,239,0.4); }
 .pill-ok { color: var(--safe); }
 .pill-missing { color: var(--unsafe); }
 
@@ -561,6 +571,58 @@ body {
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes toast-out { to { opacity: 0; transform: translateY(-6px); } }
 .toast strong { color: var(--unsafe); }
+
+/* -------------------------------------------------------------------- */
+/* Big alert - a hard-to-miss, whole-screen violation flag. The border    */
+/* glow frames the viewport without covering the live feed; the banner    */
+/* drops down from the top with the specific worker/violation text.       */
+/* -------------------------------------------------------------------- */
+.big-alert-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: inset 0 0 0 8px var(--unsafe), inset 0 0 140px 30px rgba(255, 92, 92, 0.5);
+  transition: opacity 0.2s ease;
+}
+.big-alert-overlay.show {
+  opacity: 1;
+  animation: big-alert-pulse 0.7s ease-in-out infinite;
+}
+@keyframes big-alert-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.5); }
+}
+
+.big-alert-banner {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  z-index: 61;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--unsafe);
+  color: #fff;
+  padding: 16px 30px;
+  border-radius: var(--radius);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  transform: translate(-50%, -160%);
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.3, 1.3);
+}
+.big-alert-banner.show { transform: translate(-50%, 0); }
+.big-alert-banner svg { flex: none; width: 30px; height: 30px; }
+.big-alert-text { display: flex; flex-direction: column; gap: 2px; }
+.big-alert-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 18px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.big-alert-detail { font-size: 13.5px; font-weight: 500; opacity: 0.92; }
 
 /* -------------------------------------------------------------------- */
 /* Auth gate                                                            */
@@ -733,6 +795,8 @@ body {
 }
 .violation-card-body .vc-title { font-size: 12px; font-weight: 600; color: var(--unsafe); }
 .violation-card-body .vc-time { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+.violation-card.kind-fall .vc-title { color: var(--fallen); }
+.violation-card.kind-object_fall .vc-title { color: var(--hazard); }
 
 .alert-thumb {
   width: 34px;

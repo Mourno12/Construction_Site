@@ -1,9 +1,9 @@
 """
 train_vit.py
 Complete transfer-learning pipeline that fine-tunes a Vision Transformer
-(google/vit-base-patch16-224-in21k) into a 2-head sigmoid classifier for:
-    output[0] = P(helmet worn)
-    output[1] = P(vest worn)
+(google/vit-base-patch16-224-in21k) into a multi-label sigmoid classifier,
+one output per label in config.ALL_TRAINABLE_LABELS (by default:
+helmet, vest, gloves, boots, mask, fallen).
 
 Usage:
     python train_vit.py --data_dir ./dataset --epochs 15 --batch_size 32
@@ -30,8 +30,10 @@ from dataset import PPEDataset
 def build_model():
     model = ViTForImageClassification.from_pretrained(
         config.VIT_BASE_MODEL,
-        num_labels=2,                      # [helmet, vest]
+        num_labels=len(config.ALL_TRAINABLE_LABELS),
         problem_type="multi_label_classification",
+        id2label={i: label for i, label in enumerate(config.ALL_TRAINABLE_LABELS)},
+        label2id={label: i for i, label in enumerate(config.ALL_TRAINABLE_LABELS)},
     )
     return model
 
@@ -75,7 +77,7 @@ def run_epoch(model, loader, optimizer, device, criterion, train=True):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fine-tune ViT for PPE (helmet+vest) classification")
+    parser = argparse.ArgumentParser(description="Fine-tune ViT for PPE + worker-state classification")
     parser.add_argument("--data_dir", default=os.path.join(os.path.dirname(__file__), "dataset"))
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch_size", type=int, default=32)

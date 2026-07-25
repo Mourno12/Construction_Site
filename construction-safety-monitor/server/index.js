@@ -55,6 +55,10 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 // write a sensible summary to the session record when it ends.
 const lastStatsBySession = new Map();
 
+// Mirrors python/config.py's PPE_LABELS - used to build the "missing items"
+// list attached to a ppe/fall violation record.
+const PPE_ITEM_KEYS = ['helmet', 'vest', 'gloves', 'boots', 'mask'];
+
 wss.on('connection', (ws, req) => {
   const { searchParams } = new URL(req.url, `http://${req.headers.host}`);
   const sessionId = searchParams.get('sessionId');
@@ -154,28 +158,53 @@ pythonBridge.on('message', (msg) => {
     }
 
     const detectionsById = new Map((msg.detections || []).map((d) => [d.trackId, d]));
+    const objectsById = new Map((msg.objects || []).map((o) => [o.trackId, o]));
+
     for (const d of msg.detections || []) {
       db.upsertWorker(msg.sessionId, d.trackId, {
         framesSeen: d.framesSeen,
         complianceRate: d.complianceRate,
         lastHelmet: d.helmet,
         lastVest: d.vest,
+        lastGloves: d.gloves,
+        lastBoots: d.boots,
+        lastMask: d.mask,
+        lastFallen: d.fallen,
         compliant: d.compliant,
         firstSeen: d.firstSeen ? new Date(d.firstSeen * 1000).toISOString() : undefined,
         lastSeen: d.lastSeen ? new Date(d.lastSeen * 1000).toISOString() : undefined,
       });
     }
 
-    for (const trackId of msg.stats?.newAlerts || []) {
-      const d = detectionsById.get(trackId);
-      const violation = db.addViolation({
-        sessionId: msg.sessionId,
-        userId: user?.id,
-        trackId,
-        helmet: d ? d.helmet : false,
-        vest: d ? d.vest : false,
-        snapshotBase64: msg.annotated,
-      });
+    for (const alert of msg.stats?.newAlerts || []) {
+      const { trackId, kind } = alert; // kind: 'ppe' | 'fall' | 'object_fall'
+      let violation;
+      if (kind === 'object_fall') {
+        // Object-fall alerts key off a tracked object, not a person - there's
+        // no helmet/vest/etc info for it, just where it was when it triggered.
+        const o = objectsById.get(trackId);
+        violation = db.addViolation({
+          sessionId: msg.sessionId,
+          userId: user?.id,
+          trackId,
+          kind,
+          bbox: o ? o.bbox : null,
+          snapshotBase64: msg.annotated,
+        });
+      } else {
+        const d = detectionsById.get(trackId);
+        const missingItems = d ? PPE_ITEM_KEYS.filter((key) => !d[key]) : [];
+        violation = db.addViolation({
+          sessionId: msg.sessionId,
+          userId: user?.id,
+          trackId,
+          kind,
+          helmet: d ? d.helmet : false,
+          vest: d ? d.vest : false,
+          missingItems,
+          snapshotBase64: msg.annotated,
+        });
+      }
       // Push the persisted violation (with its snapshot URL) straight to the
       // browser so the alert feed can show the evidence thumbnail immediately.
       sessionManager.send(msg.sessionId, { type: 'violation', violation });

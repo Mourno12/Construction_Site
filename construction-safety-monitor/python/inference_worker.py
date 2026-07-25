@@ -12,12 +12,19 @@ Long-lived worker process spawned once by the Node.js backend
   STDOUT (events to Node -> forwarded to the browser over WebSocket)
     {"type": "ready", "detector": "...", "classifier": "...", "demoMode": bool}
     {"type": "result", "sessionId": "...", "mode": "...", "frameIndex": N,
-     "detections": [...], "stats": {...}, "annotated": "data:image/jpeg;base64,..."}
+     "detections": [...], "objects": [...], "stats": {...},
+     "annotated": "data:image/jpeg;base64,..."}
     {"type": "video_done", "sessionId": "..."}
     {"type": "error", "sessionId": "...", "message": "..."}
 
   Diagnostic logs are written to STDERR (never STDOUT) so they never corrupt
   the NDJSON stream: {"type": "log", "level": "...", "message": "..."}
+
+  Each entry in `stats.newAlerts` is {"trackId": N, "kind": "ppe"|"fall"|"object_fall"}:
+    - "ppe"         - a worker missing required PPE for config.ALERT_STREAK_FRAMES frames
+    - "fall"        - a worker detected as fallen for config.ALERT_STREAK_FRAMES frames
+    - "object_fall" - a tracked object (config.YOLO_OBJECT_CLASS_IDS) falling
+                       for config.OBJECT_FALL_STREAK_FRAMES frames
 """
 
 import sys
@@ -33,6 +40,7 @@ import config
 from detector import build_detector
 from tracker import SimpleIOUTracker
 from ppe_classifier import build_classifier
+from fall_events import ObjectFallTracker
 import drawing
 
 
@@ -65,7 +73,8 @@ emit({
 class SessionState:
     def __init__(self):
         self.tracker = SimpleIOUTracker() if not HAS_BUILTIN_TRACKING else None
-        self.history = {}          # track_id -> dict
+        self.history = {}          # track_id -> dict (person tracks only)
+        self.object_fall_tracker = ObjectFallTracker()
         self.frame_index = 0
         self.frame_times = []      # rolling timestamps for FPS calc
         self.stop_event = threading.Event()
@@ -126,18 +135,40 @@ def run_detection_and_tracking(frame, session):
 def process_frame(frame, session, mode):
     frame = resize_if_needed(frame)
     tracked = run_detection_and_tracking(frame, session)
+    frame_h, frame_w = frame.shape[:2]
 
     detections_payload = []
+    objects_payload = []
     safe_count = 0
     unsafe_count = 0
+    fallen_count = 0
     new_alerts = []
+    active_object_ids = set()
 
     for track_id, det in tracked:
         x1, y1, x2, y2 = det.bbox
         x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
+        x2, y2 = min(frame_w, x2), min(frame_h, y2)
         if x2 <= x1 or y2 <= y1:
             continue
+
+        if not det.is_person:
+            # Tracked non-person object (config.YOLO_OBJECT_CLASS_IDS) - run
+            # the velocity-based fall check instead of PPE classification.
+            active_object_ids.add(track_id)
+            is_falling, is_new_event = session.object_fall_tracker.update(track_id, (x1, y1, x2, y2))
+            if is_new_event:
+                new_alerts.append({"trackId": track_id, "kind": "object_fall"})
+            drawing.draw_object_box(frame, (x1, y1, x2, y2), track_id, falling=is_falling)
+            objects_payload.append({
+                "trackId": track_id,
+                "bbox": [x1, y1, x2, y2],
+                "confidence": round(det.confidence, 3),
+                "falling": is_falling,
+                "isNewAlert": is_new_event,
+            })
+            continue
+
         crop = frame[y1:y2, x1:x2]
         ppe = CLASSIFIER.classify(crop)
 
@@ -150,6 +181,8 @@ def process_frame(frame, session, mode):
         })
         h["lastSeen"] = time.time()
         h["framesSeen"] += 1
+        if ppe.fallen:
+            fallen_count += 1
         if ppe.compliant:
             h["framesCompliant"] += 1
             h["badStreak"] = 0
@@ -160,12 +193,13 @@ def process_frame(frame, session, mode):
             unsafe_count += 1
             if h["badStreak"] >= config.ALERT_STREAK_FRAMES and not h["alerted"]:
                 h["alerted"] = True
-                new_alerts.append(track_id)
+                new_alerts.append({"trackId": track_id, "kind": "fall" if ppe.fallen else "ppe"})
 
         compliance_rate = 100.0 * h["framesCompliant"] / h["framesSeen"] if h["framesSeen"] else 0.0
 
         drawing.draw_worker_box(frame, (x1, y1, x2, y2), track_id, ppe, compliance_rate)
 
+        new_alert_track_ids = {a["trackId"] for a in new_alerts}
         detections_payload.append({
             "trackId": track_id,
             "bbox": [x1, y1, x2, y2],
@@ -175,8 +209,10 @@ def process_frame(frame, session, mode):
             "framesSeen": h["framesSeen"],
             "firstSeen": h["firstSeen"],
             "lastSeen": h["lastSeen"],
-            "isNewAlert": track_id in new_alerts,
+            "isNewAlert": track_id in new_alert_track_ids,
         })
+
+    session.object_fall_tracker.prune(active_object_ids)
 
     session.frame_index += 1
     fps = session.rolling_fps()
@@ -186,6 +222,8 @@ def process_frame(frame, session, mode):
         "totalWorkers": total_workers,
         "safeCount": safe_count,
         "unsafeCount": unsafe_count,
+        "fallenCount": fallen_count,
+        "trackedObjects": len(objects_payload),
         "complianceRatePct": round(100.0 * safe_count / total_workers, 1) if total_workers else 100.0,
         "fps": round(fps, 1),
         "demoMode": DEMO_MODE,
@@ -193,7 +231,7 @@ def process_frame(frame, session, mode):
     }
 
     drawing.draw_hud(frame, stats, demo_mode=DEMO_MODE)
-    return frame, detections_payload, stats
+    return frame, detections_payload, objects_payload, stats
 
 
 def handle_frame_command(cmd):
@@ -203,12 +241,13 @@ def handle_frame_command(cmd):
         frame = decode_base64_image(cmd["image"])
         if frame is None:
             raise ValueError("Could not decode image data")
-        annotated, detections, stats = process_frame(frame, session, cmd.get("mode", "webcam"))
+        annotated, detections, objects, stats = process_frame(frame, session, cmd.get("mode", "webcam"))
         emit({
             "type": "result",
             "sessionId": session_id,
             "mode": cmd.get("mode", "webcam"),
             "detections": detections,
+            "objects": objects,
             "stats": stats,
             "annotated": encode_frame_to_data_url(annotated),
         })
@@ -235,12 +274,13 @@ def handle_start_video(cmd):
                 if not ok:
                     break
                 t0 = time.time()
-                annotated, detections, stats = process_frame(frame, session, "video")
+                annotated, detections, objects, stats = process_frame(frame, session, "video")
                 emit({
                     "type": "result",
                     "sessionId": session_id,
                     "mode": "video",
                     "detections": detections,
+                    "objects": objects,
                     "stats": stats,
                     "annotated": encode_frame_to_data_url(annotated),
                 })

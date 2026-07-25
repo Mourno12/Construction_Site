@@ -95,6 +95,31 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_violations_timestamp ON violations(timestamp);
 `;
 
+// Columns added after the original schema shipped. CREATE TABLE IF NOT
+// EXISTS above only helps on a brand-new database file - an existing
+// siteguard.db from before these fields existed needs each column added
+// in place, or every query naming them would fail against old files.
+const SCHEMA_MIGRATIONS = [
+  ['workers', 'last_gloves', 'INTEGER'],
+  ['workers', 'last_boots', 'INTEGER'],
+  ['workers', 'last_mask', 'INTEGER'],
+  ['workers', 'last_fallen', 'INTEGER'],
+  ['violations', 'kind', "TEXT DEFAULT 'ppe'"],       // 'ppe' | 'fall' | 'object_fall'
+  ['violations', 'missing_items', 'TEXT'],            // JSON array, e.g. ["gloves","mask"]
+  ['violations', 'bbox', 'TEXT'],                     // JSON [x1,y1,x2,y2], used by object_fall (no trackId-based PPE info)
+];
+
+function runMigrations() {
+  for (const [table, column, columnDef] of SCHEMA_MIGRATIONS) {
+    try {
+      _sqlDb.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${columnDef}`);
+    } catch (e) {
+      // Column already exists (this file was created after the migration
+      // landed, or it already ran once) - nothing to do.
+    }
+  }
+}
+
 let _sqlDb = null;
 let _ready = false;
 
@@ -119,6 +144,8 @@ async function init() {
     _sqlDb = new SQL.Database();
     _sqlDb.exec(SCHEMA_SQL);
   }
+
+  runMigrations();
 
   _ready = true;
   save();
@@ -218,6 +245,10 @@ function mapWorkerRow(row) {
     complianceRate: row.compliance_rate,
     lastHelmet: !!row.last_helmet,
     lastVest: !!row.last_vest,
+    lastGloves: !!row.last_gloves,
+    lastBoots: !!row.last_boots,
+    lastMask: !!row.last_mask,
+    lastFallen: !!row.last_fallen,
     compliant: !!row.compliant,
   };
 }
@@ -232,6 +263,9 @@ function mapViolationRow(row) {
     vest: !!row.vest,
     timestamp: row.timestamp,
     snapshot: row.snapshot,
+    kind: row.kind || 'ppe', // 'ppe' | 'fall' | 'object_fall' - absent on rows written before this field existed
+    missingItems: row.missing_items ? JSON.parse(row.missing_items) : [],
+    bbox: row.bbox ? JSON.parse(row.bbox) : null,
   };
 }
 
@@ -363,23 +397,34 @@ function upsertWorker(sessionId, trackId, patch) {
 
   if (!existing) {
     run(
-      `INSERT INTO workers (session_id, track_id, first_seen, last_seen, frames_seen, compliance_rate, last_helmet, last_vest, compliant)
-       VALUES (?, ?, ?, ?, 0, 100, 1, 1, 1)`,
+      `INSERT INTO workers (session_id, track_id, first_seen, last_seen, frames_seen, compliance_rate, last_helmet, last_vest, last_gloves, last_boots, last_mask, last_fallen, compliant)
+       VALUES (?, ?, ?, ?, 0, 100, 1, 1, 1, 1, 1, 0, 1)`,
       [sessionId, trackId, patch.firstSeen || now, now]
     );
     evictExcessWorkers(sessionId);
   }
 
+  // present-by-default (1) for PPE items, absent-by-default (0) for fallen -
+  // matches the same "optimistic until proven otherwise" fallback the
+  // original helmet/vest columns used.
+  const bit = (value, existingCol, fallback) =>
+    value !== undefined ? (value ? 1 : 0) : (existing ? existing[existingCol] : fallback);
+
   run(
-    `UPDATE workers SET last_seen = ?, frames_seen = ?, compliance_rate = ?, last_helmet = ?, last_vest = ?, compliant = ?
+    `UPDATE workers SET last_seen = ?, frames_seen = ?, compliance_rate = ?,
+       last_helmet = ?, last_vest = ?, last_gloves = ?, last_boots = ?, last_mask = ?, last_fallen = ?, compliant = ?
      WHERE session_id = ? AND track_id = ?`,
     [
       patch.lastSeen || now,
       patch.framesSeen ?? (existing ? existing.frames_seen : 0),
       patch.complianceRate ?? (existing ? existing.compliance_rate : 100),
-      patch.lastHelmet !== undefined ? (patch.lastHelmet ? 1 : 0) : (existing ? existing.last_helmet : 1),
-      patch.lastVest !== undefined ? (patch.lastVest ? 1 : 0) : (existing ? existing.last_vest : 1),
-      patch.compliant !== undefined ? (patch.compliant ? 1 : 0) : (existing ? existing.compliant : 1),
+      bit(patch.lastHelmet, 'last_helmet', 1),
+      bit(patch.lastVest, 'last_vest', 1),
+      bit(patch.lastGloves, 'last_gloves', 1),
+      bit(patch.lastBoots, 'last_boots', 1),
+      bit(patch.lastMask, 'last_mask', 1),
+      bit(patch.lastFallen, 'last_fallen', 0),
+      bit(patch.compliant, 'compliant', 1),
       sessionId,
       trackId,
     ]
@@ -414,7 +459,7 @@ function listWorkers(sessionId) {
 // Violations (one row per alert - i.e. a worker crossing the "missing PPE
 // for N consecutive frames" threshold), with an optional evidence snapshot.
 // ---------------------------------------------------------------------------
-function addViolation({ sessionId, userId, trackId, helmet, vest, snapshotBase64 }) {
+function addViolation({ sessionId, userId, trackId, kind = 'ppe', helmet, vest, missingItems, bbox, snapshotBase64 }) {
   const id = uuidv4();
   let snapshotFile = null;
 
@@ -431,13 +476,19 @@ function addViolation({ sessionId, userId, trackId, helmet, vest, snapshotBase64
 
   const timestamp = new Date().toISOString();
   const snapshot = snapshotFile ? `/violations/${snapshotFile}` : null;
+  const missingItemsJson = missingItems && missingItems.length ? JSON.stringify(missingItems) : null;
+  const bboxJson = bbox ? JSON.stringify(bbox) : null;
   run(
-    `INSERT INTO violations (id, session_id, user_id, track_id, helmet, vest, timestamp, snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, sessionId, userId || null, trackId, helmet ? 1 : 0, vest ? 1 : 0, timestamp, snapshot]
+    `INSERT INTO violations (id, session_id, user_id, track_id, helmet, vest, timestamp, snapshot, kind, missing_items, bbox)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, sessionId, userId || null, trackId, helmet ? 1 : 0, vest ? 1 : 0, timestamp, snapshot, kind, missingItemsJson, bboxJson]
   );
   save(); // violations are comparatively rare and important - flush immediately
 
-  return { id, sessionId, userId: userId || null, trackId, helmet, vest, timestamp, snapshot };
+  return {
+    id, sessionId, userId: userId || null, trackId, helmet: !!helmet, vest: !!vest, timestamp, snapshot,
+    kind, missingItems: missingItems || [], bbox: bbox || null,
+  };
 }
 
 function listViolations({ sessionId, userId, limit } = {}) {

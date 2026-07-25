@@ -86,6 +86,13 @@
       <span id="engineStatusText">Connecting to inference engine…</span>
     </div>
     <div class="status-chip mono" id="clockChip">--:--:--</div>
+    <button class="btn btn-ghost btn-icon" id="soundToggleBtn" type="button" aria-pressed="false" title="Mute alert sound">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 9v6h4l5 5V4L8 9H4Z" fill="currentColor"/>
+        <path id="soundWaves" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a9 9 0 0 1 0 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <path id="soundMuteSlash" d="M16 8l5 8M21 8l-5 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" hidden></path>
+      </svg>
+    </button>
     <button class="btn btn-ghost btn-logout" id="logoutBtn">Log Out</button>
   </div>
 </header>
@@ -218,8 +225,7 @@
           <tr>
             <th>ID</th>
             <th>Status</th>
-            <th>Helmet</th>
-            <th>Vest</th>
+            <th>Missing PPE</th>
             <th>Compliance Rate</th>
             <th>Frames Seen</th>
             <th>First Seen</th>
@@ -227,7 +233,7 @@
           </tr>
         </thead>
         <tbody id="workerTableBody">
-          <tr class="table-empty-row"><td colspan="8">Worker tracking data will appear here once monitoring starts.</td></tr>
+          <tr class="table-empty-row"><td colspan="7">Worker tracking data will appear here once monitoring starts.</td></tr>
         </tbody>
       </table>
     </div>
@@ -281,6 +287,19 @@
   </section>
 
 </main>
+
+<div class="big-alert-overlay" id="bigAlertOverlay" aria-hidden="true" hidden></div>
+<div class="big-alert-banner" id="bigAlertBanner" role="alert" aria-live="assertive" hidden>
+  <svg viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M13 2 L24 22 H2 Z" fill="#fff"/>
+    <rect x="11.6" y="9" width="2.8" height="7.5" fill="var(--unsafe)"/>
+    <rect x="11.6" y="18" width="2.8" height="2.4" fill="var(--unsafe)"/>
+  </svg>
+  <div class="big-alert-text">
+    <span class="big-alert-title" id="bigAlertTitle">Safety Violation</span>
+    <span class="big-alert-detail" id="bigAlertDetail"></span>
+  </div>
+</div>
 
 <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
