@@ -74,10 +74,10 @@ class SimpleIOUTracker:
 
         # Age out tracks that had no match this frame
         for track_id, track in list(self.tracks.items()):
-            if track_id not in matched_track_ids and track_id not in [t for t, d in matched_pairs]:
-                if track_id not in [results[i] for i in range(len(results)) if results[i] is not None]:
-                    track.missed_frames += 1
-                if track.missed_frames > config.TRACKER_MAX_MISSED_FRAMES:
-                    del self.tracks[track_id]
+            if track_id in matched_track_ids:
+                continue
+            track.missed_frames += 1
+            if track.missed_frames > config.TRACKER_MAX_MISSED_FRAMES:
+                del self.tracks[track_id]
 
         return [(results[i], detections[i]) for i in range(len(detections))]

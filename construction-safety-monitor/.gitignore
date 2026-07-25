@@ -18,6 +18,7 @@ uploads/*
 
 # Persisted app data (users, sessions, violations) - don't commit real data
 data/siteguard.db
+data/db.json
 data/violations/*
 !data/violations/.gitkeep
 

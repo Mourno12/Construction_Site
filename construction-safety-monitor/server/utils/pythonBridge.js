@@ -32,7 +32,11 @@ function resolvePythonBin() {
 
   for (const candidate of candidates) {
     const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
-    if (!result.error) return candidate;
+    // On Windows, "python"/"python3" can resolve to the App Execution Alias
+    // stub (Microsoft Store shortcut) even when no real Python is installed.
+    // That stub launches fine (no ENOENT) but exits non-zero, so a bare
+    // "did it error" check silently accepts a Python that doesn't run.
+    if (!result.error && result.status === 0) return candidate;
   }
 
   // Nothing worked - fall back to the most likely name so the resulting
