@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SiteGuard — Construction Safety Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div class="grid-backdrop" aria-hidden="true"></div>
+
+<!-- ============ AUTH GATE ============ -->
+<div class="auth-gate" id="authGate">
+  <div class="auth-card">
+    <div class="brand auth-brand">
+      <span class="brand-mark">
+        <svg width="30" height="30" viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M13 2 L24 22 H2 Z" stroke="var(--hazard)" stroke-width="2.2" stroke-linejoin="round"/>
+          <rect x="11.6" y="9" width="2.8" height="7.5" fill="var(--hazard)"/>
+          <rect x="11.6" y="18" width="2.8" height="2.4" fill="var(--hazard)"/>
+        </svg>
+      </span>
+      <div class="brand-text">
+        <span class="brand-name">SITE<b>GUARD</b></span>
+        <span class="brand-sub">PPE Compliance Monitoring</span>
+      </div>
+    </div>
+
+    <div class="auth-tabs" role="tablist">
+      <button class="auth-tab active" data-tab="login" role="tab" aria-selected="true">Log In</button>
+      <button class="auth-tab" data-tab="register" role="tab" aria-selected="false">Register</button>
+    </div>
+
+    <form class="auth-form active" id="loginForm" data-form="login">
+      <label class="field-label" for="loginUsername">Username</label>
+      <input class="field-input" id="loginUsername" name="username" autocomplete="username" required />
+      <label class="field-label" for="loginPassword">Password</label>
+      <input class="field-input" id="loginPassword" name="password" type="password" autocomplete="current-password" required />
+      <button class="btn btn-primary auth-submit" type="submit">Log In</button>
+      <p class="auth-error" id="loginError" hidden></p>
+    </form>
+
+    <form class="auth-form" id="registerForm" data-form="register">
+      <label class="field-label" for="registerUsername">Username</label>
+      <input class="field-input" id="registerUsername" name="username" autocomplete="username" minlength="3" maxlength="32" required />
+      <label class="field-label" for="registerEmail">Email</label>
+      <input class="field-input" id="registerEmail" name="email" type="email" autocomplete="email" required />
+      <label class="field-label" for="registerPassword">Password</label>
+      <input class="field-input" id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" required />
+      <span class="field-hint">At least 8 characters, with a letter and a number. The first account created becomes the site admin.</span>
+      <button class="btn btn-primary auth-submit" type="submit">Create Account</button>
+      <p class="auth-error" id="registerError" hidden></p>
+    </form>
+  </div>
+</div>
+
+<div class="app-shell" id="appShell" hidden>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">
+      <svg width="26" height="26" viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M13 2 L24 22 H2 Z" stroke="var(--hazard)" stroke-width="2.2" stroke-linejoin="round"/>
+        <rect x="11.6" y="9" width="2.8" height="7.5" fill="var(--hazard)"/>
+        <rect x="11.6" y="18" width="2.8" height="2.4" fill="var(--hazard)"/>
+      </svg>
+    </span>
+    <div class="brand-text">
+      <span class="brand-name">SITE<b>GUARD</b></span>
+      <span class="brand-sub">PPE Compliance Monitoring</span>
+    </div>
+  </div>
+
+  <div class="topbar-status">
+    <div class="status-chip user-chip">
+      <span class="dot dot-live"></span>
+      <span id="usernameText">—</span>
+      <span class="role-badge" id="roleBadge">—</span>
+    </div>
+    <div class="status-chip" id="engineStatusChip">
+      <span class="dot dot-pending" id="engineDot"></span>
+      <span id="engineStatusText">Connecting to inference engine…</span>
+    </div>
+    <div class="status-chip mono" id="clockChip">--:--:--</div>
+    <button class="btn btn-ghost btn-logout" id="logoutBtn">Log Out</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ============ LEFT: VIEWFINDER + CONTROLS ============ -->
+  <section class="panel viewfinder-panel">
+    <div class="panel-head">
+      <h2><span class="eyebrow">01</span> Live Feed</h2>
+      <div class="mode-switch" role="tablist" aria-label="Input source">
+        <button class="mode-btn active" data-mode="webcam" role="tab" aria-selected="true">Webcam</button>
+        <button class="mode-btn" data-mode="video" role="tab" aria-selected="false">Upload Video</button>
+        <button class="mode-btn" data-mode="image" role="tab" aria-selected="false">Upload Image</button>
+      </div>
+    </div>
+
+    <div class="viewfinder" id="viewfinder">
+      <span class="vf-corner tl"></span>
+      <span class="vf-corner tr"></span>
+      <span class="vf-corner bl"></span>
+      <span class="vf-corner br"></span>
+      <div class="scan-line" id="scanLine" aria-hidden="true"></div>
+
+      <img id="feedImage" class="feed-image" alt="Live annotated detection feed" hidden />
+      <video id="feedVideoRaw" class="feed-image capture-source" autoplay muted playsinline></video>
+
+      <div class="vf-empty" id="vfEmpty">
+        <svg width="46" height="46" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M2 8L9 3H15L22 8V17C22 18.1 21.1 19 20 19H4C2.9 19 2 18.1 2 17V8Z" stroke="currentColor" stroke-width="1.4"/>
+          <circle cx="12" cy="12.5" r="4" stroke="currentColor" stroke-width="1.4"/>
+        </svg>
+        <p>No feed active</p>
+        <span>Choose a source below to start monitoring</span>
+      </div>
+
+      <div class="vf-badge-row" id="vfBadgeRow" hidden>
+        <span class="vf-badge fps" id="fpsBadge">-- FPS</span>
+        <span class="vf-badge demo" id="demoBadge" hidden>DEMO MODE</span>
+      </div>
+    </div>
+
+    <div class="source-controls">
+      <div class="source-pane active" data-pane="webcam">
+        <button class="btn btn-primary" id="webcamStartBtn" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+          <span id="webcamStartBtnLabel">Waiting for engine…</span>
+        </button>
+        <button class="btn btn-ghost" id="webcamStopBtn" hidden>Stop</button>
+      </div>
+
+      <div class="source-pane" data-pane="video">
+        <label class="dropzone" id="videoDropzone">
+          <input type="file" id="videoInput" accept="video/*" hidden />
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 16V4M12 4l-4 4M12 4l4 4M4 20h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="videoDropzoneLabel">Drop a video file here, or click to browse</span>
+        </label>
+        <button class="btn btn-primary" id="videoStartBtn" disabled>Process Video</button>
+        <button class="btn btn-ghost" id="videoStopBtn" hidden>Stop</button>
+      </div>
+
+      <div class="source-pane" data-pane="image">
+        <label class="dropzone" id="imageDropzone">
+          <input type="file" id="imageInput" accept="image/*" hidden />
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 16V4M12 4l-4 4M12 4l4 4M4 20h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="imageDropzoneLabel">Drop an image here, or click to browse</span>
+        </label>
+        <button class="btn btn-primary" id="imageStartBtn" disabled>Analyze Image</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RIGHT: STATS ============ -->
+  <section class="panel stats-panel">
+    <div class="panel-head">
+      <h2><span class="eyebrow">02</span> Site Overview</h2>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat-card">
+        <span class="stat-label">Total Workers</span>
+        <span class="stat-value mono" id="statTotal">0</span>
+      </div>
+      <div class="stat-card safe">
+        <span class="stat-label">Safe</span>
+        <span class="stat-value mono" id="statSafe">0</span>
+      </div>
+      <div class="stat-card unsafe">
+        <span class="stat-label">Violations</span>
+        <span class="stat-value mono" id="statUnsafe">0</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Detection Speed</span>
+        <span class="stat-value mono" id="statFps">0.0<small> fps</small></span>
+      </div>
+    </div>
+
+    <div class="compliance-meter">
+      <div class="compliance-meter-head">
+        <span>Live Compliance Rate</span>
+        <span class="mono" id="complianceValue">100%</span>
+      </div>
+      <div class="meter-track">
+        <div class="meter-fill" id="complianceFill" style="width:100%"></div>
+      </div>
+    </div>
+
+    <div class="panel-subhead">
+      <h3><span class="eyebrow">03</span> Violation Alerts</h3>
+      <span class="badge-count" id="alertCount">0</span>
+    </div>
+    <ul class="alert-feed" id="alertFeed">
+      <li class="alert-empty">No violations detected yet.</li>
+    </ul>
+  </section>
+
+  <!-- ============ BOTTOM: WORKER TABLE ============ -->
+  <section class="panel table-panel">
+    <div class="panel-head">
+      <h2><span class="eyebrow">04</span> Worker Tracking Log</h2>
+      <div class="panel-head-actions">
+        <span class="panel-hint mono" id="trackedCountHint">0 tracked</span>
+        <button class="btn btn-ghost btn-sm" id="exportWorkersCsvBtn" disabled>Export CSV</button>
+        <button class="btn btn-ghost btn-sm" id="exportWorkersJsonBtn" disabled>Export JSON</button>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="worker-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Status</th>
+            <th>Helmet</th>
+            <th>Vest</th>
+            <th>Compliance Rate</th>
+            <th>Frames Seen</th>
+            <th>First Seen</th>
+            <th>Duration</th>
+          </tr>
+        </thead>
+        <tbody id="workerTableBody">
+          <tr class="table-empty-row"><td colspan="8">Worker tracking data will appear here once monitoring starts.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ HISTORY & REPORTS ============ -->
+  <section class="panel history-panel">
+    <div class="panel-head">
+      <h2><span class="eyebrow">05</span> Session History &amp; Reports</h2>
+      <div class="panel-head-actions">
+        <div class="mode-switch" id="historyScopeSwitch" hidden>
+          <button class="mode-btn active" data-scope="all">All Sessions</button>
+          <button class="mode-btn" data-scope="mine">My Sessions</button>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="exportAllViolationsCsvBtn">Export All Violations (CSV)</button>
+        <button class="btn btn-ghost btn-sm" id="exportAllViolationsJsonBtn">Export All Violations (JSON)</button>
+        <button class="btn btn-ghost btn-sm" id="refreshHistoryBtn">Refresh</button>
+      </div>
+    </div>
+
+    <div class="history-grid">
+      <div class="history-col">
+        <h3 class="history-col-title">Past Sessions</h3>
+        <div class="table-scroll history-scroll">
+          <table class="worker-table">
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>User</th>
+                <th>Mode</th>
+                <th>Workers</th>
+                <th>Violations</th>
+                <th>Compliance</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="sessionHistoryBody">
+              <tr class="table-empty-row"><td colspan="7">No sessions yet. Run a webcam, video, or image scan to see it here.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="history-col">
+        <h3 class="history-col-title">Violation Evidence Log</h3>
+        <ul class="violation-gallery" id="violationGallery">
+          <li class="alert-empty">No violations logged yet.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+<canvas id="captureCanvas" hidden></canvas>
+
+</div><!-- /#appShell -->
+
+<script src="js/app.js"></script>
+</body>
+</html>

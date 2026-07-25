@@ -1,0 +1,31 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Python
+python/venv/
+python/__pycache__/
+python/**/__pycache__/
+*.pyc
+
+# Model weights (large binaries - don't commit)
+*.pt
+python/models/vit_ppe_classifier/
+
+# Uploaded media
+uploads/*
+!uploads/.gitkeep
+
+# Persisted app data (users, sessions, violations) - don't commit real data
+data/siteguard.db
+data/violations/*
+!data/violations/.gitkeep
+
+# Dataset images (large)
+python/dataset/images/*
+!python/dataset/images/.gitkeep
+
+# OS / editor
+.DS_Store
+.vscode/
+*.log

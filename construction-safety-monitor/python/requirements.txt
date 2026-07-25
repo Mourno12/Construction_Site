@@ -1,0 +1,29 @@
+# Core CV / detection / tracking
+ultralytics>=8.3.78         # YOLOv12n detection + built-in ByteTrack tracker
+                             # (need a recent ultralytics for YOLO12 support;
+                             # `pip install -U ultralytics` if load fails)
+opencv-python>=4.9.0
+
+# Vision Transformer classifier (PPE: helmet + vest)
+torch>=2.2.0
+torchvision>=0.17.0
+transformers>=4.40.0
+accelerate>=0.29.0
+
+# General
+numpy>=1.26.0
+pillow>=10.3.0
+pandas>=2.2.0
+scikit-learn>=1.4.0
+tqdm>=4.66.0
+matplotlib>=3.8.0
+
+# NOTE:
+# - If ultralytics / torch / transformers are not installed (or no compatible
+#   GPU/CPU wheel is available on your machine), inference_worker.py
+#   automatically falls back to:
+#     * OpenCV HOG person detector      (instead of YOLOv12n)
+#     * A simple IOU-based tracker      (instead of ByteTrack)
+#     * A colour-heuristic PPE checker  (instead of the fine-tuned ViT)
+#   This means the system still runs end-to-end in "DEMO MODE" even before
+#   you install/train the real models. See README.md > Demo Mode.

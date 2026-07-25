@@ -1,0 +1,29 @@
+{
+  "name": "construction-site-safety-monitoring-system",
+  "version": "1.0.0",
+  "description": "Real-time AI-powered construction site safety (PPE) monitoring system - YOLOv12n + ViT + ByteTrack + WebSocket dashboard",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js"
+  },
+  "keywords": ["ppe-detection", "computer-vision", "yolo", "vision-transformer", "construction-safety"],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.0",
+    "multer": "^1.4.5-lts.1",
+    "cors": "^2.8.5",
+    "uuid": "^9.0.1",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "express-rate-limit": "^7.4.0",
+    "sql.js": "^1.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
