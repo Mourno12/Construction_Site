@@ -7,7 +7,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'siteguard-dev-secret-change-me';
+const JWT_SECRET = process.env.JWT_SECRET || 'edgeguard-dev-secret-change-me';
 const JWT_EXPIRES_IN = '12h';
 
 if (!process.env.JWT_SECRET) {

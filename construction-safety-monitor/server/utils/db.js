@@ -1,6 +1,6 @@
 /**
  * db.js
- * Real SQLite persistence for SiteGuard, via sql.js - SQLite compiled to
+ * Real SQLite persistence for EdgeGuard, via sql.js - SQLite compiled to
  * WebAssembly. Deliberately NOT using a native module (better-sqlite3,
  * node-sqlite3, etc.): those require a matching prebuilt binary or a C++
  * build toolchain on install, which is exactly the kind of environment
@@ -11,7 +11,7 @@
  * Trade-off: sql.js runs entirely in memory and has no built-in file
  * persistence, so this module keeps the same "load into memory, debounce
  * writes to disk" pattern as before - except the on-disk file is now a real
- * SQLite database (data/siteguard.db) instead of a hand-rolled JSON blob,
+ * SQLite database (data/edgeguard.db) instead of a hand-rolled JSON blob,
  * with actual schema, indexes, and SQL queries doing the filtering that
  * used to be done by hand in JavaScript.
  *
@@ -27,7 +27,7 @@ const initSqlJs = require('sql.js');
 const { v4: uuidv4 } = require('uuid');
 
 const DATA_DIR = path.join(__dirname, '..', '..', 'data');
-const DB_FILE = path.join(DATA_DIR, 'siteguard.db');
+const DB_FILE = path.join(DATA_DIR, 'edgeguard.db');
 const VIOLATIONS_DIR = path.join(DATA_DIR, 'violations');
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -97,7 +97,7 @@ const SCHEMA_SQL = `
 
 // Columns added after the original schema shipped. CREATE TABLE IF NOT
 // EXISTS above only helps on a brand-new database file - an existing
-// siteguard.db from before these fields existed needs each column added
+// edgeguard.db from before these fields existed needs each column added
 // in place, or every query naming them would fail against old files.
 const SCHEMA_MIGRATIONS = [
   ['workers', 'last_gloves', 'INTEGER'],

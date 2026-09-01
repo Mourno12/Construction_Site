@@ -1,6 +1,6 @@
 /**
  * app.js
- * Dashboard logic for SiteGuard. Handles:
+ * Dashboard logic for EdgeGuard. Handles:
  *  - Auth gate: register / log in / log out (JWT stored in localStorage)
  *  - Mode switching (webcam / upload video / upload image)
  *  - Capturing webcam frames and streaming them over WebSocket
@@ -14,8 +14,8 @@
 (() => {
   'use strict';
 
-  const AUTH_STORAGE_KEY = 'siteguard_auth'; // { token, username, role }
-  const SOUND_STORAGE_KEY = 'siteguard_sound_enabled';
+  const AUTH_STORAGE_KEY = 'edgeguard_auth'; // { token, username, role }
+  const SOUND_STORAGE_KEY = 'edgeguard_sound_enabled';
 
   const els = {
     authGate: document.getElementById('authGate'),

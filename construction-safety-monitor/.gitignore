@@ -11,20 +11,28 @@ python/**/__pycache__/
 # Model weights (large binaries - don't commit)
 *.pt
 python/models/vit_ppe_classifier/
+python/models/vit_fall_classifier/
 
 # Uploaded media
 uploads/*
 !uploads/.gitkeep
 
 # Persisted app data (users, sessions, violations) - don't commit real data
-data/siteguard.db
+data/edgeguard.db
 data/db.json
 data/violations/*
 !data/violations/.gitkeep
 
-# Dataset images (large)
-python/dataset/images/*
-!python/dataset/images/.gitkeep
+# Dataset images (large) - .gitkeep keeps the folder itself tracked so the
+# expected layout is visible in the repo, everything dropped inside is not
+python/dataset_ppe/images/*
+!python/dataset_ppe/images/.gitkeep
+python/dataset_fall/images/*
+!python/dataset_fall/images/.gitkeep
+
+# Raw downloaded third-party datasets (Kaggle/Roboflow/Ultralytics) - large,
+# and typically not ours to redistribute; see python/tools/build_dataset.py
+python/raw_datasets/
 
 # OS / editor
 .DS_Store

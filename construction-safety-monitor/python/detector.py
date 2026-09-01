@@ -20,6 +20,7 @@ import numpy as np
 import cv2
 
 import config
+from device_utils import select_device
 
 
 def log(message, level="info"):
@@ -48,7 +49,13 @@ class YOLOPersonDetector:
     def __init__(self, weights=config.YOLO_WEIGHTS):
         from ultralytics import YOLO
         self.model = YOLO(weights)
-        self.name = f"YOLOv12n ({weights})"
+        # Ultralytics' own device auto-detection checks CUDA then falls back
+        # to CPU - it doesn't automatically pick up an Intel XPU the way our
+        # training scripts do (see train_yolo.py), so pick it explicitly the
+        # same way here, or GPU-equipped machines silently run inference on
+        # CPU despite the hardware being available.
+        self.device = select_device()
+        self.name = f"YOLO ({weights}) on {self.device}"
 
     def detect_and_track(self, frame):
         """
@@ -66,6 +73,7 @@ class YOLOPersonDetector:
             classes=track_classes,
             conf=config.YOLO_CONF_THRESHOLD,
             iou=config.YOLO_IOU_THRESHOLD,
+            device=self.device,
             verbose=False,
         )
         out = []
@@ -108,7 +116,7 @@ class HOGPersonDetector:
 
 def build_detector():
     """
-    Attempts to load the real YOLOv12n detector. Falls back to HOG
+    Attempts to load the real YOLOv26n detector. Falls back to HOG
     (no tracking built-in) if ultralytics/torch are unavailable or the
     weights fail to download/load.
     Returns: (detector, has_builtin_tracking: bool)
@@ -118,7 +126,7 @@ def build_detector():
         log(f"Loaded person detector: {detector.name}")
         return detector, True
     except Exception as e:
-        log(f"Could not load YOLOv12n ({e}). Falling back to OpenCV HOG detector.", "warn")
+        log(f"Could not load YOLOv26n ({e}). Falling back to OpenCV HOG detector.", "warn")
         detector = HOGPersonDetector()
         log(f"Loaded person detector: {detector.name}", "warn")
         return detector, False

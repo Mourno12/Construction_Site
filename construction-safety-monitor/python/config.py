@@ -12,11 +12,17 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ---------------------------------------------------------------------------
 # Model weights
 # ---------------------------------------------------------------------------
-# YOLO detector. "yolo12n.pt" is auto-downloaded by ultralytics on first run
-# if it isn't found locally. Swap in your own fine-tuned weights by pointing
-# this at a custom .pt file.
-YOLO_WEIGHTS = os.environ.get("YOLO_WEIGHTS", "yolo12n.pt")
-YOLO_PERSON_CLASS_ID = 0          # COCO class id for "person"
+# YOLO detector. Defaults to our own fine-tuned weights (see train_yolo.py /
+# tools/build_yolo_dataset.py) - trained on person + helmet/vest/gloves/
+# boots/mask, class ids 0-5 matching YOLO_PERSON_CLASS_ID below. Falls back
+# to stock "yolo12n.pt" (auto-downloaded by ultralytics) if that file isn't
+# present, e.g. on a fresh checkout before you've trained/placed it.
+_CUSTOM_YOLO_WEIGHTS = os.path.join(BASE_DIR, "models", "yolo_ppe_best.pt")
+YOLO_WEIGHTS = os.environ.get(
+    "YOLO_WEIGHTS",
+    _CUSTOM_YOLO_WEIGHTS if os.path.exists(_CUSTOM_YOLO_WEIGHTS) else "yolo12n.pt",
+)
+YOLO_PERSON_CLASS_ID = 0          # class id for "person" (COCO and our custom weights both use 0)
 YOLO_CONF_THRESHOLD = 0.45
 YOLO_IOU_THRESHOLD = 0.45
 
@@ -37,17 +43,23 @@ TRACKER_CONFIG = "bytetrack.yaml"
 # ---------------------------------------------------------------------------
 # PPE classifier labels (ViT + heuristic fallback both produce all of these)
 # ---------------------------------------------------------------------------
-# Order matters: it's the order of sigmoid outputs from the fine-tuned ViT
+# Order matters: it's the order of sigmoid outputs from a fine-tuned ViT
 # head (see train_vit.py) and the column order expected in the training CSVs
 # (see dataset.py). Add/remove labels here to retrain on a different set -
 # nothing else in the pipeline hardcodes "5 PPE items + fallen".
 PPE_LABELS = ["helmet", "vest", "gloves", "boots", "mask"]
-ALL_TRAINABLE_LABELS = PPE_LABELS + ["fallen"]  # "fallen" is a per-crop worker-state label, trained the same way as PPE items
+FALL_LABELS = ["fallen"]
+ALL_TRAINABLE_LABELS = PPE_LABELS + FALL_LABELS
 
-# Fine-tuned ViT PPE/state classifier checkpoint directory (see train_vit.py).
-# If this directory doesn't exist / doesn't load, the system automatically
-# switches to the colour + geometry heuristic classifier ("DEMO MODE").
-VIT_CHECKPOINT_DIR = os.path.join(BASE_DIR, "models", "vit_ppe_classifier")
+# Two separate fine-tuned ViT checkpoints, not one - PPE presence (colour/
+# texture on a body region) and "fallen" (overall body pose/aspect ratio)
+# are different enough visual tasks, trained from different datasets, that
+# forcing them into a single shared model gains nothing and makes it harder
+# to tell which task is undertrained if accuracy is off. Either directory
+# missing/empty independently falls back to that piece's heuristic - PPE
+# can be trained while fall detection is still in Demo Mode, or vice versa.
+VIT_PPE_CHECKPOINT_DIR = os.path.join(BASE_DIR, "models", "vit_ppe_classifier")
+VIT_FALL_CHECKPOINT_DIR = os.path.join(BASE_DIR, "models", "vit_fall_classifier")
 VIT_BASE_MODEL = "google/vit-base-patch16-224-in21k"
 VIT_IMAGE_SIZE = 224
 

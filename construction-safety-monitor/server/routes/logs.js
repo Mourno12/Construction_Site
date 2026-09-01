@@ -1,6 +1,6 @@
 /**
  * logs.js
- * Read access to everything SiteGuard has persisted: past sessions, the
+ * Read access to everything EdgeGuard has persisted: past sessions, the
  * per-worker compliance history for a session, and the violation log
  * (with evidence snapshots) - plus CSV/JSON export of any of the above.
  *
@@ -66,7 +66,7 @@ router.get('/sessions/export', (req, res) => {
     finalComplianceRatePct: s.summary?.complianceRatePct ?? '',
     violationCount: s.summary?.violationCount ?? '',
   }));
-  sendExport(res, rows, req.query.format === 'csv' ? 'csv' : 'json', 'siteguard-sessions');
+  sendExport(res, rows, req.query.format === 'csv' ? 'csv' : 'json', 'edgeguard-sessions');
 });
 
 // GET /api/logs/sessions/:sessionId/workers
@@ -77,7 +77,7 @@ router.get('/sessions/:sessionId/workers', requireSessionAccess, (req, res) => {
 // GET /api/logs/sessions/:sessionId/workers/export?format=csv|json
 router.get('/sessions/:sessionId/workers/export', requireSessionAccess, (req, res) => {
   const rows = db.listWorkers(req.params.sessionId);
-  sendExport(res, rows, req.query.format === 'csv' ? 'csv' : 'json', `siteguard-workers-${req.params.sessionId}`);
+  sendExport(res, rows, req.query.format === 'csv' ? 'csv' : 'json', `edgeguard-workers-${req.params.sessionId}`);
 });
 
 // GET /api/logs/violations?sessionId=&mine=true&limit=200
@@ -99,7 +99,7 @@ router.get('/violations', (req, res) => {
 // GET /api/logs/violations/export?format=csv|json&sessionId=&mine=true
 router.get('/violations/export', (req, res) => {
   const rows = db.listViolations({ sessionId: req.query.sessionId, userId: scopeUserId(req) });
-  sendExport(res, rows, req.query.format === 'csv' ? 'csv' : 'json', 'siteguard-violations');
+  sendExport(res, rows, req.query.format === 'csv' ? 'csv' : 'json', 'edgeguard-violations');
 });
 
 module.exports = router;

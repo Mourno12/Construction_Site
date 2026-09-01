@@ -4,14 +4,16 @@ Classifies a cropped worker image for PPE compliance (helmet, vest, gloves,
 boots, mask) and worker state (fallen), one boolean + confidence per label
 in config.ALL_TRAINABLE_LABELS.
 
-Primary path : fine-tuned Vision Transformer (ViT-Base/16), trained with
-               train_vit.py, loaded from config.VIT_CHECKPOINT_DIR.
-               One sigmoid output per label -> {label: probability}.
-Fallback path: colour + geometry heuristic ("DEMO MODE") - looks for
-               PPE-item-coloured pixels in the relevant crop region for each
-               PPE label, and flags "fallen" from the crop's aspect ratio.
-               No training/weights required, so the whole pipeline is
-               runnable immediately after `git clone`.
+Two independent fine-tuned ViT checkpoints back this, not one - see the
+comment on VIT_PPE_CHECKPOINT_DIR/VIT_FALL_CHECKPOINT_DIR in config.py for
+why. Either one missing/untrained falls back to the colour+geometry
+heuristic for just that piece, independently:
+  - PPE items (helmet/vest/gloves/boots/mask): HSV colour masks over the
+    crop region where that item would appear on a standing worker.
+  - fallen: the crop's aspect ratio (a lying-down/slumped worker's bounding
+    box is wider than it is tall, unlike a standing one).
+No training/weights required for the heuristic path, so the whole pipeline
+is runnable immediately after `git clone`.
 """
 
 import os
@@ -64,34 +66,41 @@ class PPEResult:
         return d
 
 
-class ViTPPEClassifier:
-    """Fine-tuned Vision Transformer multi-label classifier."""
+class ViTLabelClassifier:
+    """
+    Fine-tuned Vision Transformer classifier for one specific label set
+    (either config.PPE_LABELS or config.FALL_LABELS) - a thin, reusable
+    wrapper so the PPE model and the fall model load/run identically
+    without duplicating this logic twice.
+    """
 
-    def __init__(self, checkpoint_dir=config.VIT_CHECKPOINT_DIR):
+    def __init__(self, checkpoint_dir, labels):
         import torch
         from transformers import ViTForImageClassification, ViTImageProcessor
+        from device_utils import select_device
 
         self.torch = torch
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.labels = labels
+        self.device = select_device()
         self.processor = ViTImageProcessor.from_pretrained(checkpoint_dir)
         self.model = ViTForImageClassification.from_pretrained(checkpoint_dir)
         self.model.to(self.device)
         self.model.eval()
         self.name = f"Fine-tuned ViT ({checkpoint_dir}) on {self.device}"
 
-    def classify(self, crop_bgr):
+    def classify_raw(self, crop_bgr):
+        """Returns {label: (value, confidence)} for just this model's labels."""
         rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
         inputs = self.processor(images=rgb, return_tensors="pt").to(self.device)
         with self.torch.no_grad():
-            logits = self.model(**inputs).logits  # shape (1, len(ALL_TRAINABLE_LABELS))
+            logits = self.model(**inputs).logits  # shape (1, len(self.labels))
             probs = self.torch.sigmoid(logits)[0].cpu().numpy()
 
-        values, confidences = {}, {}
-        for label, prob in zip(config.ALL_TRAINABLE_LABELS, probs):
+        out = {}
+        for label, prob in zip(self.labels, probs):
             prob = float(prob)
-            confidences[label] = prob
-            values[label] = prob >= config.LABEL_THRESHOLDS[label]
-        return PPEResult(values, confidences)
+            out[label] = (prob >= config.LABEL_THRESHOLDS[label], prob)
+        return out
 
 
 class HeuristicPPEClassifier:
@@ -146,12 +155,11 @@ class HeuristicPPEClassifier:
         # display purposes only - not a calibrated probability.
         return min(0.99, 0.5 + ratio * 2) if present else max(0.01, 0.5 - ratio)
 
-    def classify(self, crop_bgr):
+    def classify_raw(self, crop_bgr):
+        """Returns {label: (value, confidence)} for every label in ALL_TRAINABLE_LABELS."""
         h, w = crop_bgr.shape[:2]
         if h < 10 or w < 10:
-            values = {label: False for label in config.ALL_TRAINABLE_LABELS}
-            confidences = {label: 0.0 for label in config.ALL_TRAINABLE_LABELS}
-            return PPEResult(values, confidences)
+            return {label: (False, 0.0) for label in config.ALL_TRAINABLE_LABELS}
 
         hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
 
@@ -179,39 +187,90 @@ class HeuristicPPEClassifier:
             "mask": config.HEURISTIC_MASK_PIXEL_RATIO,
         }
 
-        values, confidences = {}, {}
+        out = {}
         for label in config.PPE_LABELS:
             present = ratios[label] >= thresholds[label]
-            values[label] = present
-            confidences[label] = self._ratio_to_confidence(ratios[label], present)
+            out[label] = (present, self._ratio_to_confidence(ratios[label], present))
 
         fallen = (w / float(h)) >= config.FALL_ASPECT_RATIO_THRESHOLD
-        values["fallen"] = fallen
-        confidences["fallen"] = min(0.99, (w / float(h)) / config.FALL_ASPECT_RATIO_THRESHOLD * 0.6) if fallen else 0.1
+        fallen_conf = min(0.99, (w / float(h)) / config.FALL_ASPECT_RATIO_THRESHOLD * 0.6) if fallen else 0.1
+        out["fallen"] = (fallen, fallen_conf)
+        return out
+
+    def classify(self, crop_bgr):
+        """Standalone use (e.g. if both ViT models are missing): full PPEResult."""
+        raw = self.classify_raw(crop_bgr)
+        values = {label: v for label, (v, _c) in raw.items()}
+        confidences = {label: c for label, (_v, c) in raw.items()}
+        return PPEResult(values, confidences)
+
+
+class CombinedClassifier:
+    """
+    Composes the PPE model, the fall model, and the heuristic fallback into
+    one classifier with the PPEResult interface everything downstream
+    already expects. Each of the two ViT models is used when available;
+    the heuristic fills in for whichever one (if any) isn't trained yet -
+    so PPE detection can be running the real model while fall detection is
+    still in Demo Mode, or vice versa.
+    """
+
+    def __init__(self, ppe_model, fall_model, heuristic):
+        self.ppe_model = ppe_model
+        self.fall_model = fall_model
+        self.heuristic = heuristic
+
+        parts = []
+        parts.append(ppe_model.name if ppe_model else "heuristic (PPE items)")
+        parts.append(fall_model.name if fall_model else "heuristic (fallen)")
+        self.name = f"PPE: {parts[0]} | Fallen: {parts[1]}"
+
+    def classify(self, crop_bgr):
+        # Only run the heuristic if at least one real model is missing -
+        # it's pure CPU-side colour math, cheap, but no point computing it
+        # when both trained models are loaded.
+        heuristic_raw = self.heuristic.classify_raw(crop_bgr) if not (self.ppe_model and self.fall_model) else None
+
+        values, confidences = {}, {}
+        ppe_raw = self.ppe_model.classify_raw(crop_bgr) if self.ppe_model else None
+        for label in config.PPE_LABELS:
+            v, c = (ppe_raw or heuristic_raw)[label]
+            values[label], confidences[label] = v, c
+
+        fall_raw = self.fall_model.classify_raw(crop_bgr) if self.fall_model else None
+        for label in config.FALL_LABELS:
+            v, c = (fall_raw or heuristic_raw)[label]
+            values[label], confidences[label] = v, c
 
         return PPEResult(values, confidences)
 
 
+def _try_load_vit(checkpoint_dir, labels, what):
+    if not (os.path.isdir(checkpoint_dir) and os.listdir(checkpoint_dir)):
+        log(f"No fine-tuned checkpoint found at {checkpoint_dir} for {what}. Using heuristic. Run train_vit.py to train your own.", "warn")
+        return None
+    try:
+        model = ViTLabelClassifier(checkpoint_dir, labels)
+        log(f"Loaded {what} classifier: {model.name}")
+        return model
+    except Exception as e:
+        log(f"Could not load fine-tuned checkpoint for {what} ({e}). Falling back to heuristic.", "warn")
+        return None
+
+
 def build_classifier():
     """
-    Attempts to load the fine-tuned ViT checkpoint. Falls back to the
-    colour+geometry heuristic if the checkpoint is missing or torch/
-    transformers aren't installed.
-    Returns: (classifier, is_demo_mode: bool)
+    Attempts to load each of the two fine-tuned ViT checkpoints (PPE items,
+    fallen) independently. Either one missing/untrained falls back to the
+    colour+geometry heuristic for just that piece.
+    Returns: (classifier, is_demo_mode: bool) - is_demo_mode is True if
+    either piece is running on the heuristic fallback.
     """
-    if os.path.isdir(config.VIT_CHECKPOINT_DIR) and os.listdir(config.VIT_CHECKPOINT_DIR):
-        try:
-            clf = ViTPPEClassifier()
-            log(f"Loaded PPE classifier: {clf.name}")
-            return clf, False
-        except Exception as e:
-            log(f"Could not load fine-tuned ViT checkpoint ({e}). Falling back to heuristic classifier.", "warn")
-    else:
-        log(
-            f"No fine-tuned ViT checkpoint found at {config.VIT_CHECKPOINT_DIR}. "
-            "Using heuristic classifier. Run train_vit.py to train your own.",
-            "warn",
-        )
-    clf = HeuristicPPEClassifier()
-    log(f"Loaded PPE classifier: {clf.name}", "warn")
-    return clf, True
+    ppe_model = _try_load_vit(config.VIT_PPE_CHECKPOINT_DIR, config.PPE_LABELS, "PPE")
+    fall_model = _try_load_vit(config.VIT_FALL_CHECKPOINT_DIR, config.FALL_LABELS, "fallen")
+    heuristic = HeuristicPPEClassifier()
+
+    clf = CombinedClassifier(ppe_model, fall_model, heuristic)
+    demo_mode = not (ppe_model and fall_model)
+    log(f"Classifier ready: {clf.name}", "warn" if demo_mode else "info")
+    return clf, demo_mode

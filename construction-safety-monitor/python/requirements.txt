@@ -4,10 +4,17 @@ ultralytics>=8.3.78         # YOLOv12n detection + built-in ByteTrack tracker
                              # `pip install -U ultralytics` if load fails)
 opencv-python>=4.9.0
 
-# Vision Transformer classifier (PPE: helmet + vest)
+# Vision Transformer classifiers (PPE: helmet/vest/gloves/boots/mask, and
+# a separate fallen/not-fallen model - see config.py)
 torch>=2.2.0
 torchvision>=0.17.0
-transformers>=4.40.0
+# Upper-bounded: transformers 5.x renamed ViT's internal layer names
+# (encoder.layer.X.attention.attention.query -> vit.layers.X.attention.q_proj),
+# which breaks loading the "google/vit-base-patch16-224-in21k" checkpoint -
+# every backbone weight silently comes back MISSING/UNEXPECTED and trains
+# from random init instead of the pretrained backbone. Confirmed locally
+# with transformers==5.14.1; 4.x loads it correctly.
+transformers>=4.40.0,<5.0.0
 accelerate>=0.29.0
 
 # General
@@ -17,6 +24,11 @@ pandas>=2.2.0
 scikit-learn>=1.4.0
 tqdm>=4.66.0
 matplotlib>=3.8.0
+pyyaml>=6.0        # reads data.yaml when building a training set - see tools/build_dataset.py
+
+# Optional - only needed if you download training datasets via the Kaggle
+# CLI (see tools/build_dataset.py / README "Training your own ViT classifier")
+# kaggle>=1.6.0
 
 # NOTE:
 # - If ultralytics / torch / transformers are not installed (or no compatible

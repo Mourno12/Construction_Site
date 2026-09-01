@@ -1,4 +1,4 @@
-# SiteGuard — Construction Site Safety Monitoring System
+# EdgeGuard — Construction Site Safety Monitoring System
 
 Real-time AI-powered construction site safety monitoring. Detects workers,
 checks 5 PPE items (helmet, vest, gloves, boots, mask), flags a worker who's
@@ -47,7 +47,7 @@ Browser (dashboard)
 Node.js + Express + WebSocket  (server/)
    │  NDJSON over stdin/stdout          │  reads/writes
    ▼                                     ▼
-Python inference worker              data/siteguard.db + data/violations/*.jpg
+Python inference worker              data/edgeguard.db + data/violations/*.jpg
 (python/inference_worker.py)         (users, sessions, worker history,
    ├─ detector.py (person + object)   violations with evidence snapshots,
    ├─ ppe_classifier.py (6 labels)     each tagged kind: ppe | fall | object_fall)
@@ -89,7 +89,7 @@ construction-safety-monitor/
 │   ├── css/style.css
 │   └── js/app.js
 ├── data/                    persisted store (auto-created)
-│   ├── siteguard.db           users, sessions, worker history, violations (SQLite)
+│   ├── edgeguard.db           users, sessions, worker history, violations (SQLite)
 │   └── violations/            evidence snapshot images (.jpg)
 ├── uploads/                 uploaded videos/images land here
 ├── package.json
@@ -158,7 +158,7 @@ everyone after is an `operator`.
   (`express-rate-limit`) to blunt rapid brute-force bursts.
 - Per-username account lockout (15 minutes after 5 failed logins),
   independent of the IP rate limiter, so a slow/distributed attack against
-  one account still gets throttled. This is tracked in `data/siteguard.db` and
+  one account still gets throttled. This is tracked in `data/edgeguard.db` and
   survives a server restart.
 - Username and email uniqueness enforced at registration.
 
@@ -180,7 +180,7 @@ would be — worth revisiting before any real deployment.
 image scan), the per-worker compliance history within it, and every
 violation (the moment a worker crosses the "missing PPE for N consecutive
 frames" threshold) is written to a real **SQLite database**
-(`data/siteguard.db`), with a full-frame evidence snapshot saved to
+(`data/edgeguard.db`), with a full-frame evidence snapshot saved to
 `data/violations/`. It uses [sql.js](https://github.com/sql-js/sql.js)
 (SQLite compiled to WebAssembly) rather than a native module like
 `better-sqlite3` — that's a deliberate choice so `npm install` never needs a
@@ -188,7 +188,7 @@ C++ build toolchain or a matching prebuilt binary on any OS; it's plain
 WebAssembly, so it just works everywhere `npm install` does.
 
 The file is a genuine SQLite database — open it with any standard SQLite
-tool/library (`sqlite3 data/siteguard.db`, DB Browser for SQLite, Python's
+tool/library (`sqlite3 data/edgeguard.db`, DB Browser for SQLite, Python's
 `sqlite3` module, etc.) to inspect or query it directly. Real schema, real
 foreign keys, real indexes (`server/utils/db.js`), not a hand-rolled JSON
 blob. The one trade-off: sql.js keeps the whole database in memory and

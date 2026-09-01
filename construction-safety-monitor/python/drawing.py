@@ -28,11 +28,14 @@ def draw_worker_box(frame, bbox, track_id, ppe_result, compliance_rate=None):
     if compliance_rate is not None:
         tag += f"  {compliance_rate:.0f}%"
 
-    if ppe_result.fallen:
-        detail = "WORKER DOWN"
-    else:
-        missing = [label.capitalize() for label in config.PPE_LABELS if not getattr(ppe_result, label)]
-        detail = "All PPE OK" if not missing else "Missing: " + ", ".join(missing)
+    # Always show the PPE breakdown, even when fallen - a fallen reading
+    # doesn't make the PPE model's output disappear, and a false "fallen"
+    # (see the fall classifier's known domain-gap issue on real construction
+    # photos vs. its mostly-pedestrian training data) shouldn't hide a
+    # correct PPE detection behind an unrelated banner.
+    missing = [label.capitalize() for label in config.PPE_LABELS if not getattr(ppe_result, label)]
+    ppe_detail = "All PPE OK" if not missing else "Missing: " + ", ".join(missing)
+    detail = f"WORKER DOWN  |  {ppe_detail}" if ppe_result.fallen else ppe_detail
 
     label_lines = [f"{tag}  |  {status}", detail]
     line_h = 18
