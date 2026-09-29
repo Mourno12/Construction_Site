@@ -703,12 +703,22 @@
         authedFetch(`/api/logs/sessions${mine ? '?mine=true' : ''}`),
         authedFetch(`/api/logs/violations?limit=20${mine ? '&mine=true' : ''}`),
       ]);
+      if (!sessionsRes.ok || !violationsRes.ok) {
+        throw new Error(`History request failed (sessions ${sessionsRes.status}, violations ${violationsRes.status})`);
+      }
       const sessions = await sessionsRes.json();
       const violations = await violationsRes.json();
       renderSessionHistory(sessions);
       renderViolationGallery(violations);
+      return true;
     } catch (e) {
-      // silent - history is a nice-to-have, don't block the dashboard on it
+      // History is a nice-to-have that shouldn't block the rest of the
+      // dashboard, but a silently-swallowed failure here is exactly why the
+      // Refresh button used to look broken - clicking it did nothing
+      // visible whether it worked or not. Log it so it's at least
+      // debuggable, and let the caller (the button handler) show it.
+      console.error('[history] load failed:', e);
+      return false;
     }
   }
 
@@ -805,7 +815,18 @@
 
   els.exportAllViolationsCsvBtn.addEventListener('click', () => exportUrl('/api/logs/violations/export?format=csv&mine=true'));
   els.exportAllViolationsJsonBtn.addEventListener('click', () => exportUrl('/api/logs/violations/export?format=json&mine=true'));
-  els.refreshHistoryBtn.addEventListener('click', loadHistory);
+  els.refreshHistoryBtn.addEventListener('click', async () => {
+    const btn = els.refreshHistoryBtn;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Refreshing…';
+    const ok = await loadHistory();
+    btn.textContent = ok ? originalText : 'Refresh failed';
+    btn.disabled = false;
+    if (!ok) {
+      setTimeout(() => { btn.textContent = originalText; }, 2500);
+    }
+  });
   els.exportWorkersCsvBtn.addEventListener('click', () => {
     if (state.sessionId) exportUrl(`/api/logs/sessions/${state.sessionId}/workers/export?format=csv`);
   });

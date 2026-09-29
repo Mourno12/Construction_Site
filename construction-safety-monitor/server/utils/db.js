@@ -506,19 +506,87 @@ function listViolations({ sessionId, userId, limit } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// CSV helper (generic, used by the export routes)
+// CSV helpers (used by the export routes)
 // ---------------------------------------------------------------------------
+function csvEscape(val) {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+  const str = String(val);
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+// camelCase field name -> "Title Case With Spaces" column header, so a
+// plain data dump (sessionId, framesSeen, lastHelmet, ...) reads like a
+// report instead of a variable listing.
+function prettifyHeader(key) {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
+// Generic: dumps whatever shape of row it's given, one column per key,
+// headers prettified. Fine for sessions/workers exports, which don't need
+// any row-specific formatting (no embedded links, no enum labels).
 function toCSV(rows) {
   if (!rows.length) return '';
-  const headers = Object.keys(rows[0]);
-  const escape = (val) => {
-    if (val === null || val === undefined) return '';
-    const str = String(val);
-    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
-  };
-  const lines = [headers.join(',')];
+  const keys = Object.keys(rows[0]);
+  const lines = [keys.map(prettifyHeader).join(',')];
   for (const row of rows) {
-    lines.push(headers.map((h) => escape(row[h])).join(','));
+    lines.push(keys.map((k) => csvEscape(row[k])).join(','));
+  }
+  return lines.join('\n');
+}
+
+const VIOLATION_KIND_LABELS = { ppe: 'PPE Violation', fall: 'Worker Fallen', object_fall: 'Falling Object' };
+
+// Violations get their own formatter rather than the generic one above,
+// because a raw dump of this table is genuinely hard to read as a report:
+// a bare relative path ("/violations/<uuid>.jpg") isn't a working link once
+// it leaves the browser (no host, and plain CSV text isn't clickable at
+// all), the "kind" enum reads as code not English, and the most
+// review-relevant columns (when, who, what) were buried after id/session/
+// user UUIDs that matter for lookups but not for a human scanning the log.
+// baseUrl (e.g. "http://localhost:3000") turns the stored relative snapshot
+// path into a full URL, wrapped in Excel/Sheets' own HYPERLINK() formula so
+// it opens as an actual clickable link, not inert text.
+function violationsToCSV(rows, baseUrl) {
+  const headers = [
+    'Timestamp', 'Worker ID', 'Type', 'Missing PPE Items',
+    'Helmet', 'Vest', 'Photo Preview', 'Evidence Snapshot',
+    'Violation ID', 'Session ID', 'User ID', 'Object BBox',
+  ];
+  const lines = [headers.join(',')];
+  for (const v of rows) {
+    const snapshotUrl = v.snapshot ? `${baseUrl}${v.snapshot}` : null;
+    // IMAGE() renders an actual thumbnail in the cell - only works in
+    // Excel for Microsoft 365 (desktop), and only while this server is
+    // running, since it fetches from baseUrl (localhost) live when the
+    // sheet is opened/recalculated. Older Excel and Google Sheets (which
+    // can't reach localhost at all) will show #NAME?/broken - HYPERLINK
+    // next to it is the fallback that works everywhere.
+    const photoCell = snapshotUrl ? `=IMAGE("${snapshotUrl}","Evidence photo",0)` : 'No photo';
+    const snapshotCell = snapshotUrl ? `=HYPERLINK("${snapshotUrl}","View Snapshot")` : 'No snapshot';
+    const cells = [
+      new Date(v.timestamp).toLocaleString(),
+      v.trackId,
+      VIOLATION_KIND_LABELS[v.kind] || v.kind,
+      v.missingItems.join(', '),
+      v.kind === 'object_fall' ? '' : (v.helmet ? 'Yes' : 'No'),
+      v.kind === 'object_fall' ? '' : (v.vest ? 'Yes' : 'No'),
+      photoCell,
+      snapshotCell,
+      v.id,
+      v.sessionId,
+      v.userId || '',
+      v.bbox ? JSON.stringify(v.bbox) : '',
+    ];
+    // photoCell/snapshotCell are the two cells allowed to start with "="
+    // (IMAGE/HYPERLINK formulas); csvEscape would otherwise treat them
+    // like any other string, which is fine - it only quotes on
+    // comma/quote/newline and these formula strings contain commas, so
+    // they get quoted, which Excel/Sheets still parses correctly as a
+    // formula.
+    lines.push(cells.map(csvEscape).join(','));
   }
   return lines.join('\n');
 }
@@ -545,4 +613,5 @@ module.exports = {
   addViolation,
   listViolations,
   toCSV,
+  violationsToCSV,
 };

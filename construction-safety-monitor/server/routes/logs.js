@@ -99,7 +99,16 @@ router.get('/violations', (req, res) => {
 // GET /api/logs/violations/export?format=csv|json&sessionId=&mine=true
 router.get('/violations/export', (req, res) => {
   const rows = db.listViolations({ sessionId: req.query.sessionId, userId: scopeUserId(req) });
-  sendExport(res, rows, req.query.format === 'csv' ? 'csv' : 'json', 'edgeguard-violations');
+  if (req.query.format === 'csv') {
+    // Violations get a purpose-built CSV (readable column names, a real
+    // clickable link to the evidence snapshot) rather than the generic
+    // row dump used for sessions/workers - see db.violationsToCSV for why.
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="edgeguard-violations.csv"');
+    return res.send(db.violationsToCSV(rows, baseUrl));
+  }
+  sendExport(res, rows, 'json', 'edgeguard-violations');
 });
 
 module.exports = router;

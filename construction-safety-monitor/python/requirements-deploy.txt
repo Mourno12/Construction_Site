@@ -1,0 +1,17 @@
+# Minimal runtime deps for a free/low-RAM deploy (e.g. Render free instance,
+# 512MB RAM) - deliberately excludes torch/ultralytics/transformers/
+# accelerate. Without them, detector.py and ppe_classifier.py/fall_events.py
+# automatically fall back to their lightweight paths (OpenCV HOG person
+# detector + colour-heuristic PPE/fall check) - see detector.py's
+# build_detector() and ppe_classifier.py's build_classifier(). This is the
+# same "DEMO MODE" the app already runs in locally whenever the full ML
+# stack isn't installed; it just avoids ever installing that heavy stack
+# for this deploy target, since torch+ultralytics alone won't reliably fit
+# in 512MB RAM. See python/requirements.txt for the full stack (real
+# YOLO + ViT) used for local development/training.
+# Pinned below 5.0: opencv-python-headless 5.0.0's Windows/manylinux wheel
+# is missing cv2.HOGDescriptor (AttributeError at runtime) - confirmed by
+# testing the HOG fallback path directly. 4.x has it.
+opencv-python-headless>=4.9.0,<5
+numpy>=1.26.0
+pillow>=10.3.0

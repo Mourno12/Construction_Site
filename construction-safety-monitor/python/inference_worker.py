@@ -38,7 +38,7 @@ import cv2
 
 import config
 from detector import build_detector
-from tracker import SimpleIOUTracker
+from tracker import SimpleIOUTracker, iou
 from ppe_classifier import build_classifier
 from fall_events import ObjectFallTracker
 import drawing
@@ -74,6 +74,7 @@ class SessionState:
     def __init__(self):
         self.tracker = SimpleIOUTracker() if not HAS_BUILTIN_TRACKING else None
         self.history = {}          # track_id -> dict (person tracks only)
+        self.recent_alerts = []    # [{"bbox", "kind", "ts"}] - see config.ALERT_DEDUP_*
         self.object_fall_tracker = ObjectFallTracker()
         self.frame_index = 0
         self.frame_times = []      # rolling timestamps for FPS calc
@@ -87,6 +88,25 @@ class SessionState:
             return 0.0
         span = self.frame_times[-1] - self.frame_times[0]
         return (len(self.frame_times) - 1) / span if span > 0 else 0.0
+
+    def is_duplicate_alert(self, bbox, kind):
+        """True if a same-kind alert already fired very recently for a
+        heavily-overlapping box - almost certainly the same physical worker
+        under a churned track_id, not a genuinely new violation. See
+        config.ALERT_DEDUP_* for why this is needed on top of the per-track
+        badStreak/alerted debounce."""
+        now = time.time()
+        self.recent_alerts = [
+            a for a in self.recent_alerts
+            if now - a["ts"] < config.ALERT_DEDUP_WINDOW_SECONDS
+        ]
+        return any(
+            a["kind"] == kind and iou(a["bbox"], bbox) >= config.ALERT_DEDUP_IOU_THRESHOLD
+            for a in self.recent_alerts
+        )
+
+    def record_alert(self, bbox, kind):
+        self.recent_alerts.append({"bbox": bbox, "kind": kind, "ts": time.time()})
 
 
 SESSIONS = {}
@@ -157,8 +177,9 @@ def process_frame(frame, session, mode):
             # the velocity-based fall check instead of PPE classification.
             active_object_ids.add(track_id)
             is_falling, is_new_event = session.object_fall_tracker.update(track_id, (x1, y1, x2, y2))
-            if is_new_event:
+            if is_new_event and not session.is_duplicate_alert((x1, y1, x2, y2), "object_fall"):
                 new_alerts.append({"trackId": track_id, "kind": "object_fall"})
+                session.record_alert((x1, y1, x2, y2), "object_fall")
             drawing.draw_object_box(frame, (x1, y1, x2, y2), track_id, falling=is_falling)
             objects_payload.append({
                 "trackId": track_id,
@@ -176,24 +197,51 @@ def process_frame(frame, session, mode):
             "firstSeen": time.time(),
             "framesSeen": 0,
             "framesCompliant": 0,
-            "badStreak": 0,
-            "alerted": False,
+            "fallStreak": 0,
+            "fallAlerted": False,
+            "ppeStreak": 0,
+            "ppeAlerted": False,
         })
         h["lastSeen"] = time.time()
         h["framesSeen"] += 1
+        bbox = (x1, y1, x2, y2)
+        missing_ppe = [item for item in config.REQUIRED_PPE_ITEMS if not getattr(ppe, item)]
+
         if ppe.fallen:
             fallen_count += 1
         if ppe.compliant:
             h["framesCompliant"] += 1
-            h["badStreak"] = 0
-            h["alerted"] = False
             safe_count += 1
         else:
-            h["badStreak"] += 1
             unsafe_count += 1
-            if h["badStreak"] >= config.ALERT_STREAK_FRAMES and not h["alerted"]:
-                h["alerted"] = True
-                new_alerts.append({"trackId": track_id, "kind": "fall" if ppe.fallen else "ppe"})
+
+        # Fallen and "missing PPE" are tracked as two independent conditions,
+        # each with its own streak/alerted state, so a worker who is both
+        # down AND missing PPE gets a snapshot for each - previously a single
+        # combined badStreak/alerted picked only "fall" (fallen overrides
+        # compliant), so the PPE violation for that same worker never got
+        # its own evidence capture.
+        if ppe.fallen:
+            h["fallStreak"] += 1
+            if h["fallStreak"] >= config.ALERT_STREAK_FRAMES and not h["fallAlerted"]:
+                h["fallAlerted"] = True
+                if not session.is_duplicate_alert(bbox, "fall"):
+                    new_alerts.append({"trackId": track_id, "kind": "fall"})
+                    session.record_alert(bbox, "fall")
+        else:
+            h["fallStreak"] = 0
+            h["fallAlerted"] = False
+
+        if missing_ppe:
+            h["ppeStreak"] += 1
+            if h["ppeStreak"] >= config.ALERT_STREAK_FRAMES and not h["ppeAlerted"]:
+                h["ppeAlerted"] = True
+                if not session.is_duplicate_alert(bbox, "ppe"):
+                    new_alerts.append({"trackId": track_id, "kind": "ppe"})
+                    session.record_alert(bbox, "ppe")
+        else:
+            h["ppeStreak"] = 0
+            h["ppeAlerted"] = False
 
         compliance_rate = 100.0 * h["framesCompliant"] / h["framesSeen"] if h["framesSeen"] else 0.0
 

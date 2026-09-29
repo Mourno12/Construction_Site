@@ -16,10 +16,17 @@ on this machine - if not, everything here still works, it just resolves
 to "cpu".
 """
 
-import torch
-
-
 def select_device():
+    # Imported lazily, not at module scope: detector.py imports this module
+    # unconditionally (not inside its build_detector() try/except), so a
+    # top-level `import torch` here would crash that import - and therefore
+    # kill the HOG fallback too - on any machine/deploy that doesn't have
+    # torch installed at all. select_device() itself is only ever called
+    # from inside YOLOPersonDetector.__init__ and ppe_classifier's ViT
+    # loading path, both of which are already guarded by their own
+    # try/except, so torch being missing there still degrades gracefully.
+    import torch
+
     if torch.cuda.is_available():
         return "cuda"
     if hasattr(torch, "xpu") and torch.xpu.is_available():

@@ -1,0 +1,43 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Persisted/runtime data - recreated on container start, or genuinely
+# shouldn't ship (ephemeral disk on the free tier anyway, see README)
+data/
+uploads/
+
+# Git / editor / docs
+.git/
+.gitattributes
+.gitignore
+.vscode/
+*.md
+
+# Python - training-only code, datasets, large weights and archives.
+# None of this is imported by the runtime inference path (inference_worker.py
+# and what it imports) - see the audit noted in requirements-deploy.txt.
+python/__pycache__/
+python/**/__pycache__/
+python/venv/
+python/baselines/
+python/csm_code.zip
+python/dataset_fall/
+python/dataset_ppe/
+python/datasets/
+python/fall_training_package.zip
+python/images/
+python/labels/
+python/models/
+python/ppe_training_package.zip
+python/raw_datasets/
+python/runs/
+python/tools/
+python/train_on_colab.ipynb
+python/train_vit.py
+python/train_yolo.py
+python/dataset.py
+python/yolo12n.pt
+python/yolo26n.pt
+python/yolo_training_package.zip
+python/requirements.txt

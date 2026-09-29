@@ -111,6 +111,19 @@ TRACKER_MIN_IOU = 0.15           # lenient on purpose: the fallback HOG detector
 # flicker/false alarms.
 ALERT_STREAK_FRAMES = 5
 
+# Alert dedup: the streak counter above lives on a track_id, so it only
+# suppresses repeat alerts if the SAME id stays assigned to the same worker.
+# The fallback IOU tracker (tracker.py) has no motion prediction, so at low
+# FPS - Demo Mode on modest hardware, typically - the same physical worker's
+# box moves more between processed frames than the tracker's IOU threshold
+# tolerates, and it gets a brand-new id. That resets badStreak/alerted to
+# zero, so one continuous violation was firing (and snapshotting) repeatedly
+# under a churn of different ids - see inference_worker.py's alert-dedup
+# check, which additionally rejects a new alert if a very recent one (any
+# track_id) already fired for a heavily-overlapping box.
+ALERT_DEDUP_WINDOW_SECONDS = 8.0
+ALERT_DEDUP_IOU_THRESHOLD = 0.3
+
 # ---------------------------------------------------------------------------
 # Object-fall detection (tracked objects only - see YOLO_OBJECT_CLASS_IDS)
 # ---------------------------------------------------------------------------
